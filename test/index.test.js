@@ -1,6 +1,7 @@
 import test, { beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { gzipSync } from 'node:zlib';
+import { runInNewContext } from 'node:vm';
 import worker from '../src/index.js';
 
 const realFetch = globalThis.fetch;
@@ -136,6 +137,35 @@ test('page renders calm n/a server-side when the provider is unavailable', async
 test('invalid ancestor configuration fails closed and cannot inject CSP', async () => {
   const r = await request('/', {ALLOWED_ANCESTORS:"https://blockdyor.com; script-src *"});
   assert.match(r.headers.get('content-security-policy'), /frame-ancestors 'none'/);
+});
+test('keyboard inspection announces historical prices in a permanent live region', async () => {
+  const html = await (await request('/')).text();
+  assert.match(html, /id="announcement"[^>]*role="status"[^>]*aria-live="polite"/);
+  const handlers = new Map(), nodes = {};
+  for (const id of ['chart','line','dot','tip','announcement','ranges','theme']) {
+    nodes[id] = { textContent: '', hidden: false,
+      addEventListener(type, fn) { handlers.set(id + ':' + type, fn); },
+      setAttribute() {}, getBoundingClientRect() { return {width:320,height:80}; } };
+  }
+  nodes.line.points = [{x:0,y:-70000},{x:1,y:-71000}];
+  nodes.chart.viewBox = {baseVal:{width:1,height:1120}};
+  const script = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].at(-1)[1];
+  // Execute the actual generated client; the DOM stubs replace browser primitives, not chart logic.
+  runInNewContext(script, {document:{documentElement:{dataset:{theme:'light'}}, getElementById:id=>nodes[id], addEventListener(){}}, window:{addEventListener(){}}, Intl, setTimeout(){}, clearTimeout(){} });
+  handlers.get('chart:keydown')({key:'Home',preventDefault(){}});
+  assert.match(nodes.announcement.textContent, /\$70,000/);
+  assert.equal(nodes.announcement.textContent, nodes.tip.textContent);
+  handlers.get('chart:keydown')({key:'End',preventDefault(){}});
+  assert.match(nodes.announcement.textContent, /\$71,000/);
+});
+test('light up-stroke meets non-text contrast without changing the brand token', async () => {
+  const html = await (await request('/')).text();
+  assert.match(html, /--up:#10b981/);
+  const color = html.match(/--line-up:(#[0-9a-f]{6})/i)?.[1];
+  assert.ok(color, 'An explicit accessible light-mode stroke is required');
+  const rgb = color.slice(1).match(/../g).map(h => parseInt(h,16)/255).map(v => v <= .04045 ? v/12.92 : ((v+.055)/1.055)**2.4);
+  const luminance = rgb[0]*.2126+rgb[1]*.7152+rgb[2]*.0722;
+  assert.ok(1.05/(luminance+.05) >= 3);
 });
 test('widget is scoped, supports dimensions, lazy frames and theme messages', async () => {
   const r = await request('/widget.js'); const script = await r.text();
