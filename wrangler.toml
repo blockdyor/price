@@ -1,0 +1,8 @@
+# Optional documentation only. Dashboard deployment needs no CLI or credentials.
+# Replace the name if using this file for local tooling; no account IDs belong here.
+name = "your-btc-price-worker"
+main = "src/index.js"
+compatibility_date = "2026-11-15"
+
+[vars]
+ALLOWED_ANCESTORS = "*"
