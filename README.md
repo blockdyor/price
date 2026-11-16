@@ -60,7 +60,7 @@ Cloudflare Workers Builds can deploy this repository whenever `main` changes. Co
 
 Use these build settings:
 
-- Repository: `blockdyor/btc-price`
+- Repository: `blockdyor/price`
 - Production branch: `main`
 - Root directory: repository root (leave the default)
 - Build command: `npm test` (recommended; no compilation is needed)
@@ -88,12 +88,12 @@ References: [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/bui
 All price data comes from **mempool.space**, without an API key: [historical prices](https://mempool.space/api/v1/historical-price?currency=USD) for the range chart, and [current prices](https://mempool.space/api/v1/prices) for the headline, tab title and rightmost chart point. [API documentation](https://mempool.space/docs/api/rest) · [Terms](https://mempool.space/terms-of-service).
 
 - The headline, browser tab title and chart endpoint use the same quote and publication timestamp. Quotes are checked every five seconds while visible and once per minute while hidden, so the tab title can keep updating without full-speed background polling. Browsers may still throttle or suspend background tabs. The current point replaces the previous live endpoint instead of accumulating a fictitious tick for every browser poll. Historical refreshes reapply that endpoint, and the displayed line remains capped at 300 points. Older provider responses cannot move the displayed quote backwards.
-- `Updated … UTC` shows mempool's publication time, not when the Worker checked it. **Polling does not make mempool publish faster:** its current-price feed is not tick-by-tick, and the historical samples are generally hourly. The interface can remain unchanged between provider updates.
-- A quote served from the Worker's cache shows `Cached … UTC`, using that same original publication timestamp. The quote API exposes `X-Price-Cache: fresh` for a cache hit and `miss` for an upstream fetch; its JSON schema is unchanged. When only history is cached, the caption adds `chart cached` instead of mislabelling the current quote. Cache status never turns retrieval time into a newer price timestamp.
+- The caption shows only `HH:MM UTC`, using mempool's publication time, not when the Worker checked it. **Polling does not make mempool publish faster:** its current-price feed is not tick-by-tick, and the historical samples are generally hourly. The interface can remain unchanged between provider updates.
+- If either displayed data source is cached, the card uses one label: `Cached · HH:MM UTC`. There is no separate quote/chart cache wording. The time belongs to the current quote, or the final historical sample when the quote is unavailable; it never becomes retrieval time. With no usable data the headline is `n/a` and the caption is empty. API cache headers and JSON schemas are unchanged.
 - `/api/quote?cur=usd` returns `{price,currency,fetchedAt,time}`. Both timestamps are Unix milliseconds: `time` is publication time, `fetchedAt` is retrieval time. Invalid, future or more-than-one-hour-old upstream quotes are rejected. Failure returns HTTP 503 with null values and `no-store`; historical values are not substituted as current. The headline and tab title show `n/a`, while available history remains visible.
 - The whole price briefly turns green on a higher displayed value or red on a lower one for 450 ms. Initial and unchanged values do not flash; reduced-motion preferences disable the animation. Prices are displayed to cents consistently in the headline and tab title.
 - Historical freshness is 60 seconds for `days=1`, 300 seconds for other ranges. Historical Cache API entries retain the last good response for up to 24 hours after retrieval. A stale entry can be returned while `waitUntil` refreshes it; without a context, the Worker attempts the provider synchronously and falls back on failure.
-- Fresh historical responses include `stale-while-revalidate=60`. Stale history is marked `X-Price-Cache: stale` and `cached` in the chart title, with `no-store` so a browser cannot extend the fallback window.
+- Fresh historical responses include `stale-while-revalidate=60`. Stale history is marked `X-Price-Cache: stale`, with `no-store` so a browser cannot extend the fallback window. Cache status appears only in the compact caption, not repeated in the chart title.
 - Historical API responses contain only validated, sorted, deduplicated `[time,price]` pairs, at most 300, retaining both endpoints. Cold historical failure returns HTTP 503 with `{"prices":[]}`. The page remains HTTP 200.
 - The percentage compares the current displayed quote with the first available historical sample for the selected range. The live endpoint uses the actual provider timestamp; it does not rewrite an old hourly sample's timestamp.
 

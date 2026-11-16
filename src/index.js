@@ -82,6 +82,10 @@ function withQuote(history, quote) {
   return points.length <= 300 ? points : Array.from({ length: 300 }, (_, i) => points[Math.round(i * (points.length - 1) / 299)]);
 }
 
+function caption(time, cached) {
+  return Number.isFinite(time) ? (cached ? 'Cached · ' : '') + new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' }).format(time) + ' UTC' : '';
+}
+
 function plot(prices, cur) {
   if (prices.length < 2) return { start: 0, points: '', box: '0 0 300 80', value: 'n/a', change: '', label: 'Bitcoin price unavailable', caption: 'Price temporarily unavailable', direction: 'up' };
   const first = prices[0], last = prices.at(-1), values = prices.map(p => p[1]);
@@ -117,12 +121,12 @@ main{width:min(420px,calc(100% - 40px));margin:24px auto}header{display:flex;ali
 <svg id="chart" viewBox="${model.box}" preserveAspectRatio="none" role="img" tabindex="0" aria-label="${model.label}" title="${model.historyCaption}"><polyline id="line" points="${model.points}"/><ellipse id="dot" fill="currentColor" visibility="hidden"/></svg>
 <div id="tip" hidden aria-hidden="true"></div><span id="announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span><div class="row muted"><span id="caption">${model.caption}</span><a class="embed-brand" href="https://blockdyor.com" target="_blank" rel="noopener">← blockdyor.com</a></div>
 <nav id="ranges" aria-label="Chart range">${DAYS.map((d,i) => '<a href="?days=' + d + '&amp;cur=' + options.cur + '&amp;theme=' + options.theme + '&amp;controls=' + options.controls + '" data-days="' + d + '" aria-current="' + (d === options.days) + '">' + ['24h','7d','30d','90d','1y'][i] + '</a>').join('')}</nav></section>
-<footer class="standalone"><a href="https://blockdyor.com">← Back to blockdyor.com</a><a href="https://github.com/blockdyor/btc-price">Source</a></footer></main>
+<footer class="standalone"><a href="https://blockdyor.com">← Back to blockdyor.com</a><a href="https://github.com/blockdyor/price">Source</a></footer></main>
 <script nonce="${nonce}">
 (()=>{
 const root=document.documentElement,el=id=>document.getElementById(id),chart=el('chart'),line=el('line'),dot=el('dot'),tip=el('tip'),cur='${options.cur}';let days='${options.days}',start=${model.start};
-const money=new Intl.NumberFormat('en',{style:'currency',currency:cur.toUpperCase(),minimumFractionDigits:2,maximumFractionDigits:2}),time=new Intl.DateTimeFormat('en',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'UTC'}),clock=new Intl.DateTimeFormat('en',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false,timeZone:'UTC'});
-const withQuote=${withQuote.toString()};
+const money=new Intl.NumberFormat('en',{style:'currency',currency:cur.toUpperCase(),minimumFractionDigits:2,maximumFractionDigits:2}),time=new Intl.DateTimeFormat('en',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'UTC'});
+const withQuote=${withQuote.toString()},caption=${caption.toString()};
 let points=Array.from(line.points,p=>[Math.round(start+p.x*3600000),-p.y]),index=Math.max(0,points.length-1),controller,timer,quoteTimer,blinkTimer,quoteBusy=false,lastPrice=null,currentQuote=${JSON.stringify(model.quote)},history=currentQuote?points.slice(0,-1):points,historyCached=${model.historyCached};
 const priceEl=el('price'),hide=()=>{dot.setAttribute('visibility','hidden');tip.hidden=true};
 function draw(){
@@ -134,10 +138,11 @@ function draw(){
 }
 function showQuote(q,flash=false){
   currentQuote=q;draw();
-  if(!q){priceEl.classList.remove('tick-up','tick-down');clearTimeout(blinkTimer);lastPrice=null;document.title=priceEl.textContent='n/a';el('change').textContent='';el('caption').textContent='Live quote unavailable'+(historyCached?' · chart cached':'');return;}
+  el('caption').textContent=caption(q?.time??history.at(-1)?.[0],q?.cached||historyCached);
+  if(!q){priceEl.classList.remove('tick-up','tick-down');clearTimeout(blinkTimer);lastPrice=null;document.title=priceEl.textContent='n/a';el('change').textContent='';return;}
   const value=Math.round(q.price*100)/100;
   if(value!==lastPrice){priceEl.classList.remove('tick-up','tick-down');clearTimeout(blinkTimer);if(flash&&lastPrice!==null){priceEl.classList.add(value>lastPrice?'tick-up':'tick-down');blinkTimer=setTimeout(()=>priceEl.classList.remove('tick-up','tick-down'),450);}}
-  document.title=priceEl.textContent=money.format(value);lastPrice=value;el('caption').textContent=(q.cached?'Cached ':'Updated ')+clock.format(q.time)+' UTC'+(historyCached&&!q.cached?' · chart cached':'');
+  document.title=priceEl.textContent=money.format(value);lastPrice=value;
   const change=points.length?(value/points[0][1]-1)*100:null;
   el('change').textContent=change===null?'':(change>=0?'↗ +':'↘ ')+change.toFixed(2)+'%';
 }
@@ -185,14 +190,12 @@ export default {
       const history = (await data.json()).prices, current = live.ok ? await live.json() : null, model = plot(withQuote(history, current), options.cur);
       model.quote = current ? { ...current, cached: live.headers.get('X-Price-Cache') === 'fresh' } : null;
       model.historyCached = ['fresh', 'stale'].includes(data.headers.get('X-Price-Cache'));
-      if (data.headers.get('X-Price-Cache') === 'stale') model.caption += ' · cached';
       model.historyCaption = model.caption;
       const currentValue = model.quote ? Math.round(model.quote.price * 100) / 100 : null;
       model.value = currentValue === null ? 'n/a' : new Intl.NumberFormat('en', { style: 'currency', currency: options.cur.toUpperCase(), minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(currentValue);
       const change = currentValue !== null && history.length ? (currentValue / history[0][1] - 1) * 100 : null;
       model.change = change === null ? '' : (change >= 0 ? '↗ +' : '↘ ') + change.toFixed(2) + '%';
-      model.caption = model.quote ? (model.quote.cached ? 'Cached ' : 'Updated ') + new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'UTC' }).format(model.quote.time) + ' UTC' : 'Live quote unavailable';
-      if (model.historyCached && !model.quote?.cached) model.caption += ' · chart cached';
+      model.caption = caption(model.quote?.time ?? history.at(-1)?.[0], model.quote?.cached || model.historyCached);
       response = new Response(PAGE(nonce, options, model, req.headers.get('Sec-Fetch-Dest') === 'iframe'), { headers: { ...SECURITY, 'Content-Type': 'text/html;charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; script-src 'nonce-" + nonce + "'; style-src 'nonce-" + nonce + "'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors " + ancestors(env.ALLOWED_ANCESTORS) } });
     } else response = new Response('Not found', { status: 404, headers: SECURITY });
     return req.method === 'HEAD' ? new Response(null, { status: response.status, headers: response.headers }) : response;
