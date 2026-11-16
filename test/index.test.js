@@ -128,7 +128,7 @@ test('standalone is chart-only and contains a real server-rendered price and lin
   assert.match(html, /Back to blockdyor.com/);
   assert.match(html, /\$70,999/);
   assert.match(html, /<polyline id="line" points="[\d., -]+"/);
-  assert.ok(Buffer.byteLength(html) <= 15000); // Branded page, live endpoint and tab title; compressed size is checked above.
+  assert.ok(Buffer.byteLength(html) <= 15800); // Includes branded embeds and cache metadata; compressed size is checked above.
 });
 test('page renders calm n/a server-side when the provider is unavailable', async () => {
   globalThis.fetch = async () => { throw new Error('offline'); };
@@ -327,4 +327,33 @@ test('an older provider response cannot move the price, title or chart backwards
   const app=clientPage(await (await request('/')).text()),before=app.nodes.line.attrs.points,title=app.document.title;
   now+=6000;globalThis.fetch=async()=>ticker(69000,now/1000-60);await app.tick(5000);
   assert.equal(app.document.title,title);assert.equal(app.nodes.price.textContent,title);assert.equal(app.nodes.line.attrs.points,before);assert.equal(app.nodes.price.classes.size,0);
+});
+test('standalone has a compact fixed top margin and embeds retain the linked brand', async () => {
+  const html=await (await request('/')).text();
+  assert.match(html,/main\{[^}]*margin:24px auto/);
+  assert.doesNotMatch(html,/margin:clamp\(32px,12vh,100px\)/);
+  assert.match(html,/<header class="brand-header"><a class="brand" href="https:\/\/blockdyor.com" target="_top"/);
+  assert.match(html,/<button class="standalone" id="theme"/);
+  assert.match(html,/:root\[data-embed\] main\{[^}]*height:100dvh;display:flex;flex-direction:column/);
+  assert.match(html,/:root\[data-embed\] #card\{[^}]*flex:1;min-height:0/);
+  assert.match(html,/:root\[data-embed\] \.brand img\{height:16px\}/);
+  assert.match(html,/<a class="embed-brand" href="https:\/\/blockdyor.com"[^>]*>← blockdyor.com<\/a>/);
+  const framed=await worker.fetch(new Request('https://price.example/',{headers:{'Sec-Fetch-Dest':'iframe'}}));
+  assert.match(await framed.text(),/data-embed="1"/);
+});
+test('quote cache hits are explicit and do not change the provider timestamp', async () => {
+  const first=await request('/api/quote'),data=await first.json();assert.equal(first.headers.get('X-Price-Cache'),'miss');
+  now+=1000;const second=await request('/api/quote');assert.equal(second.headers.get('X-Price-Cache'),'fresh');assert.deepEqual(await second.json(),data);
+  const html=await (await request('/')).text();assert.match(html,/id="caption">Cached /);
+  const app=clientPage(html);assert.match(app.nodes.caption.textContent,/^Cached /);assert.equal(app.document.title,app.nodes.price.textContent);
+  const published=data.time;now+=6000;globalThis.fetch=async()=>ticker(data.price,published/1000);await app.tick(5000);
+  assert.match(app.nodes.caption.textContent,/^Updated /);
+  assert.ok(app.nodes.caption.textContent.includes(new Intl.DateTimeFormat('en',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false,timeZone:'UTC'}).format(published)));
+});
+test('cached history is visible without mislabelling a newly fetched quote', async () => {
+  await request('/api/price?days=7');
+  const html=await (await request('/')).text();assert.match(html,/id="caption">Updated [^<]* · chart cached/);
+  const app=clientPage(html);assert.match(app.nodes.caption.textContent,/^Updated .* · chart cached$/);
+  now+=6000;globalThis.fetch=async()=>new Response('',{status:503});await app.tick(5000);
+  assert.equal(app.nodes.caption.textContent,'Live quote unavailable · chart cached');assert.equal(app.document.title,'n/a');
 });

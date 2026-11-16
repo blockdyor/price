@@ -58,11 +58,11 @@ async function quote(url) {
   const cur = choose(url.searchParams.get('cur'), CURRENCIES, 'usd');
 
   const key = new Request(url.origin + '/api/quote?cur=' + cur + '&source=mempool'), cache = globalThis.caches?.default;
-  const reply = (body, seconds = 5) => new Response(body, { headers: { ...SECURITY, 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=0, s-maxage=' + seconds } });
+  const reply = (body, seconds = 5, state = 'miss') => new Response(body, { headers: { ...SECURITY, 'Content-Type': 'application/json', 'X-Price-Cache': state, 'Cache-Control': 'public, max-age=0, s-maxage=' + seconds } });
   try {
     const saved = await cache?.match(key);
     const age = saved ? Date.now() - Number(saved.headers.get('X-Fetched-At')) : Infinity;
-    if (saved && age >= 0 && age < 5000) return reply(saved.body, Math.max(0, Math.floor((5000 - age) / 1000)));
+    if (saved && age >= 0 && age < 5000) return reply(saved.body, Math.max(0, Math.floor((5000 - age) / 1000)), 'fresh');
   } catch { /* Cache failure must not hide a usable quote. */ }
   try {
     const response = await fetch('https://mempool.space/api/v1/prices', { signal: AbortSignal.timeout(4000), cf: { cacheTtl: 0 } });
@@ -101,21 +101,21 @@ const PAGE = (nonce, options, model, embedded) => `<!doctype html>
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px -apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,'Segoe UI',sans-serif}
 a{color:inherit;text-decoration:none}a:hover{text-decoration:underline}button{font:inherit;color:inherit;cursor:pointer;background:none;border:1px solid var(--bd);border-radius:7px;padding:5px 8px}
 a:focus-visible,button:focus-visible,svg:focus-visible{outline:2px solid var(--fg);outline-offset:3px}
-main{width:min(420px,calc(100% - 40px));margin:clamp(32px,12vh,100px) auto}header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px}.brand img{height:28px;width:auto;display:block;filter:brightness(0)}
+main{width:min(420px,calc(100% - 40px));margin:24px auto}header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px}.brand img{height:28px;width:auto;display:block;filter:brightness(0)}
 :root[data-theme=dark] .brand img{filter:brightness(0) invert(1)}@media(prefers-color-scheme:dark){:root[data-theme=auto] .brand img{filter:brightness(0) invert(1)}}
 #card{border:1px solid var(--bd);border-radius:12px;padding:16px;position:relative;display:flex;flex-direction:column;height:230px;min-height:0}.row{display:flex;justify-content:space-between;align-items:baseline;gap:8px}#price{font-size:28px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.6px}#change{font-size:13px}.muted{color:var(--mut);font-size:11px}
 #chart{width:100%;flex:1;min-height:0;margin:12px 0;touch-action:pan-y;color:var(--${model.direction === 'up' ? 'line-up' : 'dn'})}polyline{fill:none;stroke:currentColor;stroke-width:1.6;vector-effect:non-scaling-stroke;stroke-linejoin:round}
 #tip{position:absolute;top:53px;left:16px;pointer-events:none;background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:6px 8px;font-size:11px;max-width:calc(100% - 32px)}
 #ranges{display:flex;gap:4px;margin-top:12px}#ranges a{flex:1;text-align:center;font-size:12px;border-radius:6px;padding:6px 2px}#ranges a[aria-current=true]{background:var(--fg);color:var(--bg);text-decoration:none}footer{display:flex;justify-content:space-between;gap:12px;margin-top:20px;font-size:11px;color:var(--mut)}.embed-brand{display:none}
 #price.tick-up{animation:tick-up .45s ease-out}#price.tick-down{animation:tick-down .45s ease-out}@keyframes tick-up{0%,65%{color:var(--line-up)}100%{color:var(--fg)}}@keyframes tick-down{0%,65%{color:var(--dn)}100%{color:var(--fg)}}
-:root[data-embed] .standalone{display:none}:root[data-embed] main{width:auto;margin:0}:root[data-embed] #card{height:100dvh;padding:10px 12px}:root[data-embed] #price{font-size:22px}:root[data-embed] #chart{margin:6px 0}:root[data-embed] #tip{top:37px;left:12px}:root[data-embed]:not([data-controls="1"]) #ranges{display:none}:root[data-embed] #ranges{margin-top:4px}:root[data-embed] .embed-brand{display:inline}
+:root[data-embed] .standalone{display:none}:root[data-embed] main{width:auto;margin:0;height:100dvh;display:flex;flex-direction:column}:root[data-embed] header{margin:0 0 6px;padding:0 12px;flex:none}:root[data-embed] .brand img{height:16px}:root[data-embed] #card{height:auto;flex:1;min-height:0;padding:10px 12px}:root[data-embed] #price{font-size:22px}:root[data-embed] #chart{margin:6px 0}:root[data-embed] #tip{top:37px;left:12px}:root[data-embed]:not([data-controls="1"]) #ranges{display:none}:root[data-embed] #ranges{margin-top:4px}:root[data-embed] .embed-brand{display:inline;white-space:nowrap}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
 </style></head><body><main>
-<header class="standalone"><a class="brand" href="https://blockdyor.com"><img src="data:image/webp;base64,UklGRkwDAABXRUJQVlA4WAoAAAAQAAAAPwEASgAAQUxQSM4CAAABkIVt29lI/9q2bdu2jSPbtm3bdsaeaTuZdFbDnq1t29v5F2/y/eV4NiIm4BeHU5jF0z/gcA2zv64cKsyWQzn0ZI74J5psBffQKjt0Hsk2JSO3ZFl+WM9d+3XOyfvuBJy1ByFxPsp/IE2K84mSxC6zgnUSsbygCZLWcyWtpZWEcwiaIxFfCOohwcNZCYUl3IByQCLm1bJUgutQ+mOS9vMqog2pLBfGifUFHeJaf9bKmMY6BnOcT5A7F0uawuGLXITyHPekPOTEYlqCOLyMMr7i2n86Hv7k/sA4Hs6HJUny0ER8Z7mMtbC7idi3FiyG0larBXeYiFNrwfKCUlWoBSeZcG5Cuhq14BET8aOgydaRvRZWTMQ2tWBBxth+E/SoBetfNsFHlImM6Ga5qhx3ZMRbHO5GuV9yOJMR3TkMFZQmikNvJrbgNw6HM2KIoEnW0Z7j6kx72k8cLmQau3L4oyyDUyiTKZ6Wq6zSgXIT7aTMoLghRVQk8hNUQJRiS20Fpf+IFmjpQpmelJcHCqUEq0QgH2fpl0Oq1xU2prz2gb7v0AsfnMNpKdMVdnFIZBXh+ZwW9WRk3l8k3rRDZZrA/rEWOTVxkB3aacaxF0YcbI84MampiRR3FGyBKiodKbfQLspMm8pLKGhdk1Vyoh2C2glKp7LQeq7qiLPbwbpMXNZ2+JSOOKwdrITStWwHt+qIza1L1sERKEObdnCfjvhGUIl2sJ9eBzf0g+MpedthLx2xbztY2nrIQxidpB7GifWZ2EOc2Mu6VFcgdXculqRa4geH8xksT1F/yInFGD3ZCoMstouAtOdkOIayTyZWFjRHJragrFDgTkonhTiasloRu0ZQIVmBQy3kKhMLCGgqQ30xSixcWBxqcgypieXMZnNMTIw5DiWXn2L8V1EUo9Fo1LVuDvPEneR7x7U/z8DiWpN/yBV8JQxfCQsLCwtMb2cAVlA4IFgAAABwCACdASpAAUsAPm02mUmkIyKhIGgAgA2JaW7hdfAAO6HVUmyYh1VJsmIdVSbJiHVUmyYh1VJsmIdVSbJiHVUmyYh1VJsmIdVSbIIAAP7/uxAAAAAAAAAA" alt="blockdyor" width="320" height="75"></a><button id="theme" type="button" aria-label="Change color theme">◐</button></header>
+<header class="brand-header"><a class="brand" href="https://blockdyor.com" target="_top"><img src="data:image/webp;base64,UklGRkwDAABXRUJQVlA4WAoAAAAQAAAAPwEASgAAQUxQSM4CAAABkIVt29lI/9q2bdu2jSPbtm3bdsaeaTuZdFbDnq1t29v5F2/y/eV4NiIm4BeHU5jF0z/gcA2zv64cKsyWQzn0ZI74J5psBffQKjt0Hsk2JSO3ZFl+WM9d+3XOyfvuBJy1ByFxPsp/IE2K84mSxC6zgnUSsbygCZLWcyWtpZWEcwiaIxFfCOohwcNZCYUl3IByQCLm1bJUgutQ+mOS9vMqog2pLBfGifUFHeJaf9bKmMY6BnOcT5A7F0uawuGLXITyHPekPOTEYlqCOLyMMr7i2n86Hv7k/sA4Hs6HJUny0ER8Z7mMtbC7idi3FiyG0larBXeYiFNrwfKCUlWoBSeZcG5Cuhq14BET8aOgydaRvRZWTMQ2tWBBxth+E/SoBetfNsFHlImM6Ga5qhx3ZMRbHO5GuV9yOJMR3TkMFZQmikNvJrbgNw6HM2KIoEnW0Z7j6kx72k8cLmQau3L4oyyDUyiTKZ6Wq6zSgXIT7aTMoLghRVQk8hNUQJRiS20Fpf+IFmjpQpmelJcHCqUEq0QgH2fpl0Oq1xU2prz2gb7v0AsfnMNpKdMVdnFIZBXh+ZwW9WRk3l8k3rRDZZrA/rEWOTVxkB3aacaxF0YcbI84MampiRR3FGyBKiodKbfQLspMm8pLKGhdk1Vyoh2C2glKp7LQeq7qiLPbwbpMXNZ2+JSOOKwdrITStWwHt+qIza1L1sERKEObdnCfjvhGUIl2sJ9eBzf0g+MpedthLx2xbztY2nrIQxidpB7GifWZ2EOc2Mu6VFcgdXculqRa4geH8xksT1F/yInFGD3ZCoMstouAtOdkOIayTyZWFjRHJragrFDgTkonhTiasloRu0ZQIVmBQy3kKhMLCGgqQ30xSixcWBxqcgypieXMZnNMTIw5DiWXn2L8V1EUo9Fo1LVuDvPEneR7x7U/z8DiWpN/yBV8JQxfCQsLCwtMb2cAVlA4IFgAAABwCACdASpAAUsAPm02mUmkIyKhIGgAgA2JaW7hdfAAO6HVUmyYh1VJsmIdVSbJiHVUmyYh1VJsmIdVSbJiHVUmyYh1VJsmIdVSbIIAAP7/uxAAAAAAAAAA" alt="blockdyor" width="320" height="75"></a><button class="standalone" id="theme" type="button" aria-label="Change color theme">◐</button></header>
 <section id="card" aria-label="Bitcoin price"><div class="row"><span id="price" aria-live="polite">${model.value}</span><span id="change">${model.change}</span></div>
 <svg id="chart" viewBox="${model.box}" preserveAspectRatio="none" role="img" tabindex="0" aria-label="${model.label}" title="${model.historyCaption}"><polyline id="line" points="${model.points}"/><ellipse id="dot" fill="currentColor" visibility="hidden"/></svg>
-<div id="tip" hidden aria-hidden="true"></div><span id="announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span><div class="row muted"><span id="caption">${model.caption}</span><a class="embed-brand" href="https://blockdyor.com" target="_blank" rel="noopener">blockdyor</a></div>
+<div id="tip" hidden aria-hidden="true"></div><span id="announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span><div class="row muted"><span id="caption">${model.caption}</span><a class="embed-brand" href="https://blockdyor.com" target="_blank" rel="noopener">← blockdyor.com</a></div>
 <nav id="ranges" aria-label="Chart range">${DAYS.map((d,i) => '<a href="?days=' + d + '&amp;cur=' + options.cur + '&amp;theme=' + options.theme + '&amp;controls=' + options.controls + '" data-days="' + d + '" aria-current="' + (d === options.days) + '">' + ['24h','7d','30d','90d','1y'][i] + '</a>').join('')}</nav></section>
 <footer class="standalone"><a href="https://blockdyor.com">← Back to blockdyor.com</a><a href="https://github.com/blockdyor/btc-price">Source</a></footer></main>
 <script nonce="${nonce}">
@@ -123,7 +123,7 @@ main{width:min(420px,calc(100% - 40px));margin:clamp(32px,12vh,100px) auto}heade
 const root=document.documentElement,el=id=>document.getElementById(id),chart=el('chart'),line=el('line'),dot=el('dot'),tip=el('tip'),cur='${options.cur}';let days='${options.days}',start=${model.start};
 const money=new Intl.NumberFormat('en',{style:'currency',currency:cur.toUpperCase(),minimumFractionDigits:2,maximumFractionDigits:2}),time=new Intl.DateTimeFormat('en',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'UTC'}),clock=new Intl.DateTimeFormat('en',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false,timeZone:'UTC'});
 const withQuote=${withQuote.toString()};
-let points=Array.from(line.points,p=>[Math.round(start+p.x*3600000),-p.y]),index=Math.max(0,points.length-1),controller,timer,quoteTimer,blinkTimer,quoteBusy=false,lastPrice=null,currentQuote=${JSON.stringify(model.quote)},history=currentQuote?points.slice(0,-1):points;
+let points=Array.from(line.points,p=>[Math.round(start+p.x*3600000),-p.y]),index=Math.max(0,points.length-1),controller,timer,quoteTimer,blinkTimer,quoteBusy=false,lastPrice=null,currentQuote=${JSON.stringify(model.quote)},history=currentQuote?points.slice(0,-1):points,historyCached=${model.historyCached};
 const priceEl=el('price'),hide=()=>{dot.setAttribute('visibility','hidden');tip.hidden=true};
 function draw(){
   points=withQuote(history,currentQuote);
@@ -134,22 +134,22 @@ function draw(){
 }
 function showQuote(q,flash=false){
   currentQuote=q;draw();
-  if(!q){priceEl.classList.remove('tick-up','tick-down');clearTimeout(blinkTimer);lastPrice=null;document.title=priceEl.textContent='n/a';el('change').textContent='';el('caption').textContent='Live quote unavailable';return;}
+  if(!q){priceEl.classList.remove('tick-up','tick-down');clearTimeout(blinkTimer);lastPrice=null;document.title=priceEl.textContent='n/a';el('change').textContent='';el('caption').textContent='Live quote unavailable'+(historyCached?' · chart cached':'');return;}
   const value=Math.round(q.price*100)/100;
   if(value!==lastPrice){priceEl.classList.remove('tick-up','tick-down');clearTimeout(blinkTimer);if(flash&&lastPrice!==null){priceEl.classList.add(value>lastPrice?'tick-up':'tick-down');blinkTimer=setTimeout(()=>priceEl.classList.remove('tick-up','tick-down'),450);}}
-  document.title=priceEl.textContent=money.format(value);lastPrice=value;el('caption').textContent='Updated '+clock.format(q.time)+' UTC';
+  document.title=priceEl.textContent=money.format(value);lastPrice=value;el('caption').textContent=(q.cached?'Cached ':'Updated ')+clock.format(q.time)+' UTC'+(historyCached&&!q.cached?' · chart cached':'');
   const change=points.length?(value/points[0][1]-1)*100:null;
   el('change').textContent=change===null?'':(change>=0?'↗ +':'↘ ')+change.toFixed(2)+'%';
 }
 function scheduleQuote(){clearTimeout(quoteTimer);quoteTimer=setTimeout(loadQuote,document.hidden?60000:5000);}
-async function loadQuote(){if(quoteBusy)return;quoteBusy=true;try{const r=await fetch('/api/quote?cur='+cur,{cache:'no-store',signal:AbortSignal.timeout(4500)});if(!r.ok)throw Error();const q=await r.json();if(!Number.isFinite(q.price)||q.price<=0||!Number.isFinite(q.fetchedAt)||!Number.isFinite(q.time)||q.time<=0||q.time>Date.now()||Date.now()-q.time>3600000||q.currency!==cur)throw Error();if(!currentQuote||q.time>=currentQuote.time)showQuote(q,true);}catch{showQuote(null);}finally{quoteBusy=false;scheduleQuote();}}
+async function loadQuote(){if(quoteBusy)return;quoteBusy=true;try{const r=await fetch('/api/quote?cur='+cur,{cache:'no-store',signal:AbortSignal.timeout(4500)});if(!r.ok)throw Error();const q=await r.json();if(!Number.isFinite(q.price)||q.price<=0||!Number.isFinite(q.fetchedAt)||!Number.isFinite(q.time)||q.time<=0||q.time>Date.now()||Date.now()-q.time>3600000||q.currency!==cur)throw Error();q.cached=r.headers.get('X-Price-Cache')==='fresh';if(!currentQuote||q.time>=currentQuote.time)showQuote(q,true);}catch{showQuote(null);}finally{quoteBusy=false;scheduleQuote();}}
 function inspect(i,announce=false){if(!points.length)return;index=Math.max(0,Math.min(points.length-1,i));const p=points[index],box=chart.viewBox.baseVal,r=chart.getBoundingClientRect();dot.setAttribute('cx',(p[0]-start)/3600000);dot.setAttribute('cy',-p[1]);dot.setAttribute('rx',box.width/Math.max(1,r.width)*3);dot.setAttribute('ry',box.height/Math.max(1,r.height)*3);dot.setAttribute('visibility','visible');tip.textContent=money.format(p[1])+' · '+time.format(p[0])+' UTC';tip.hidden=false;if(announce)el('announcement').textContent=tip.textContent;}
 chart.addEventListener('pointermove',e=>{if(!points.length)return;const r=chart.getBoundingClientRect(),t=start+Math.max(0,Math.min(1,(e.clientX-r.left)/r.width))*(points.at(-1)[0]-start);let best=0;points.forEach((p,i)=>{if(Math.abs(p[0]-t)<Math.abs(points[best][0]-t))best=i});inspect(best)});
 chart.addEventListener('pointerleave',hide);chart.addEventListener('blur',hide);chart.addEventListener('keydown',e=>{if(['ArrowLeft','ArrowRight','Home','End','Escape'].includes(e.key)){e.preventDefault();if(e.key==='Escape')hide();else inspect(e.key==='Home'?0:e.key==='End'?points.length-1:index+(e.key==='ArrowRight'?1:-1),true);}});
 function schedule(){clearTimeout(timer);timer=setTimeout(()=>{if(!document.hidden)load()},days==='1'?60000:300000);}
 async function load(){controller?.abort();controller=new AbortController();const active=controller;hide();
-try{const r=await fetch('/api/price?days='+days+'&cur='+cur,{signal:AbortSignal.any([active.signal,AbortSignal.timeout(10000)])});if(!r.ok)throw Error();const d=await r.json();if(active!==controller)return;if(!Array.isArray(d.prices)||d.prices.length<2)throw Error();history=d.prices;
-}catch(e){if(active!==controller)return;history=[];}
+try{const r=await fetch('/api/price?days='+days+'&cur='+cur,{signal:AbortSignal.any([active.signal,AbortSignal.timeout(10000)])});if(!r.ok)throw Error();const d=await r.json();if(active!==controller)return;if(!Array.isArray(d.prices)||d.prices.length<2)throw Error();history=d.prices;historyCached=['fresh','stale'].includes(r.headers.get('X-Price-Cache'));
+}catch(e){if(active!==controller)return;history=[];historyCached=false;}
 if(active===controller){showQuote(currentQuote);schedule();}}
 el('ranges').addEventListener('click',e=>{const a=e.target.closest('[data-days]');if(!a)return;e.preventDefault();days=a.dataset.days;document.querySelectorAll('[data-days]').forEach(b=>b.setAttribute('aria-current',String(b.dataset.days===days)));load();});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){load();loadQuote()}else scheduleQuote()});
@@ -183,14 +183,16 @@ export default {
       const options = { days: choose(url.searchParams.get('days'), DAYS, '7'), cur: choose(url.searchParams.get('cur'), CURRENCIES, 'usd'), theme: choose(url.searchParams.get('theme'), ['light', 'dark', 'auto'], 'auto'), controls: url.searchParams.get('controls') === '1' ? '1' : '0' };
       const [data, live] = await Promise.all([price(url, ctx), quote(url)]);
       const history = (await data.json()).prices, current = live.ok ? await live.json() : null, model = plot(withQuote(history, current), options.cur);
-      model.quote = current;
+      model.quote = current ? { ...current, cached: live.headers.get('X-Price-Cache') === 'fresh' } : null;
+      model.historyCached = ['fresh', 'stale'].includes(data.headers.get('X-Price-Cache'));
       if (data.headers.get('X-Price-Cache') === 'stale') model.caption += ' · cached';
       model.historyCaption = model.caption;
       const currentValue = model.quote ? Math.round(model.quote.price * 100) / 100 : null;
       model.value = currentValue === null ? 'n/a' : new Intl.NumberFormat('en', { style: 'currency', currency: options.cur.toUpperCase(), minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(currentValue);
       const change = currentValue !== null && history.length ? (currentValue / history[0][1] - 1) * 100 : null;
       model.change = change === null ? '' : (change >= 0 ? '↗ +' : '↘ ') + change.toFixed(2) + '%';
-      model.caption = model.quote ? 'Updated ' + new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'UTC' }).format(model.quote.time) + ' UTC' : 'Live quote unavailable';
+      model.caption = model.quote ? (model.quote.cached ? 'Cached ' : 'Updated ') + new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'UTC' }).format(model.quote.time) + ' UTC' : 'Live quote unavailable';
+      if (model.historyCached && !model.quote?.cached) model.caption += ' · chart cached';
       response = new Response(PAGE(nonce, options, model, req.headers.get('Sec-Fetch-Dest') === 'iframe'), { headers: { ...SECURITY, 'Content-Type': 'text/html;charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; script-src 'nonce-" + nonce + "'; style-src 'nonce-" + nonce + "'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors " + ancestors(env.ALLOWED_ANCESTORS) } });
     } else response = new Response('Not found', { status: 404, headers: SECURITY });
     return req.method === 'HEAD' ? new Response(null, { status: response.status, headers: response.headers }) : response;
