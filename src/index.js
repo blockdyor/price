@@ -83,7 +83,7 @@ function withQuote(history, quote) {
 }
 
 function caption(time, cached) {
-  return Number.isFinite(time) ? (cached ? 'Cached · ' : '') + new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' }).format(time) + ' UTC' : '';
+  return Number.isFinite(time) ? (cached ? 'Cached · ' : '') + new Date(time).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '';
 }
 
 function plot(prices, cur) {

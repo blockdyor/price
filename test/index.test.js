@@ -208,7 +208,7 @@ test('title matches the current headline, not the historical endpoint', async ()
   const html=await (await request('/')).text();
   assert.match(html,/<title>\$71,234\.56<\/title>/);
   assert.match(html,/>\$71,234\.56<\/span>/);
-  assert.match(html,/id="caption">\d{2}:\d{2} UTC<\/span>/);
+  assert.match(html,/id="caption">\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC<\/span>/);
   assert.match(html,/prefers-reduced-motion/);
   assert.match(html,/tick-up/); assert.match(html,/tick-down/);
 });
@@ -216,7 +216,7 @@ test('quote failure does not substitute the old historical price for a live quot
   globalThis.fetch=async u=>new URL(u).pathname==='/api/v1/prices'?new Response('',{status:503}):Response.json(upstream());
   const html=await (await request('/')).text();
   assert.match(html,/id="price"[^>]*>n\/a<\/span>/);
-  assert.match(html,/id="caption">\d{2}:\d{2} UTC<\/span>/);
+  assert.match(html,/id="caption">\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC<\/span>/);
   assert.match(html,/<polyline id="line" points="[\d., -]+"/);
 });
 
@@ -246,7 +246,7 @@ test('whole-price flash follows live movement only; unchanged and initial quotes
   assert.equal(app.nodes.price.textContent,'$70,998.50');assert.ok(app.nodes.price.classes.has('tick-down'));
   await app.tick(450);now+=6000;await app.tick(5000);assert.equal(app.nodes.price.classes.size,0);
   globalThis.fetch=async()=>new Response('',{status:503});now+=6000;await app.tick(5000);
-  assert.equal(app.nodes.price.textContent,'n/a');assert.match(app.nodes.caption.textContent,/^\d{2}:\d{2} UTC$/);
+  assert.equal(app.nodes.price.textContent,'n/a');assert.match(app.nodes.caption.textContent,/^\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC$/);
 });
 test('history cannot overwrite the headline; hidden tabs keep their title updated at a slower rate', async () => {
   const app=clientPage(await (await request('/')).text());
@@ -345,7 +345,7 @@ test('standalone has a compact fixed top margin and embeds retain the linked bra
 test('quote cache hits are explicit and do not change the provider timestamp', async () => {
   const first=await request('/api/quote'),data=await first.json();assert.equal(first.headers.get('X-Price-Cache'),'miss');
   now+=1000;const second=await request('/api/quote');assert.equal(second.headers.get('X-Price-Cache'),'fresh');assert.deepEqual(await second.json(),data);
-  const clock=new Intl.DateTimeFormat('en',{hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'UTC'});
+  const clock={format:t=>new Date(t).toISOString().slice(0,16).replace('T',' ')};
   const html=await (await request('/')).text();assert.ok(html.includes('id="caption">Cached · '+clock.format(data.time)+' UTC</span>'));
   const app=clientPage(html);assert.equal(app.nodes.caption.textContent,'Cached · '+clock.format(data.time)+' UTC');assert.equal(app.document.title,app.nodes.price.textContent);
   const published=data.time;now+=6000;globalThis.fetch=async()=>ticker(data.price,published/1000);await app.tick(5000);
@@ -353,12 +353,12 @@ test('quote cache hits are explicit and do not change the provider timestamp', a
 });
 test('one compact cache label covers either data source and survives quote failure', async () => {
   const history=await (await request('/api/price?days=7')).json();
-  const html=await (await request('/')).text();assert.match(html,/id="caption">Cached · \d{2}:\d{2} UTC<\/span>/);
+  const html=await (await request('/')).text();assert.match(html,/id="caption">Cached · \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC<\/span>/);
   assert.doesNotMatch(html,/Updated |chart cached| · cached/);
-  const app=clientPage(html);assert.match(app.nodes.caption.textContent,/^Cached · \d{2}:\d{2} UTC$/);
+  const app=clientPage(html);assert.match(app.nodes.caption.textContent,/^Cached · \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC$/);
   const fallbackTime=history.prices.filter(p=>p[0]<now).at(-1)[0];
   now+=6000;globalThis.fetch=async()=>new Response('',{status:503});await app.tick(5000);
-  const clock=new Intl.DateTimeFormat('en',{hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'UTC'});
+  const clock={format:t=>new Date(t).toISOString().slice(0,16).replace('T',' ')};
   assert.equal(app.nodes.caption.textContent,'Cached · '+clock.format(fallbackTime)+' UTC');assert.equal(app.document.title,'n/a');
 });
 test('an empty card has no redundant caption and Source uses the price repository', async () => {
@@ -366,6 +366,17 @@ test('an empty card has no redundant caption and Source uses the price repositor
   const html=await (await request('/')).text(),app=clientPage(html);
   assert.match(html,/id="caption"><\/span>/);assert.equal(app.nodes.caption.textContent,'');
   assert.equal(app.nodes.price.textContent,'n/a');assert.match(html,/href="https:\/\/github.com\/blockdyor\/price">Source/);
+});
+test('caption includes the UTC calendar date and never replaces publication time across midnight', async () => {
+  now=Date.parse('2026-11-16T00:01:00Z');
+  const published=Date.parse('2026-11-15T23:59:30Z');
+  globalThis.fetch=async u=>new URL(u).pathname==='/api/v1/prices'?ticker(70999,published/1000):Response.json(upstream());
+  await request('/api/quote');
+  const html=await (await request('/')).text(),app=clientPage(html);
+  assert.match(html,/id="caption">Cached · 2026-11-15 23:59 UTC<\/span>/);
+  assert.equal(app.nodes.caption.textContent,'Cached · 2026-11-15 23:59 UTC');
+  now+=6000;await app.tick(5000);
+  assert.equal(app.nodes.caption.textContent,'2026-11-15 23:59 UTC');
 });
 test('Git builds target price and preserve dashboard-managed variables and routes', () => {
   const config=readFileSync(new URL('../wrangler.toml',import.meta.url),'utf8');
