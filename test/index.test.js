@@ -2,6 +2,7 @@ import test, { beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { gzipSync } from 'node:zlib';
 import { runInNewContext } from 'node:vm';
+import { readFileSync } from 'node:fs';
 import worker from '../src/index.js';
 
 const realFetch = globalThis.fetch;
@@ -356,4 +357,12 @@ test('cached history is visible without mislabelling a newly fetched quote', asy
   const app=clientPage(html);assert.match(app.nodes.caption.textContent,/^Updated .* · chart cached$/);
   now+=6000;globalThis.fetch=async()=>new Response('',{status:503});await app.tick(5000);
   assert.equal(app.nodes.caption.textContent,'Live quote unavailable · chart cached');assert.equal(app.document.title,'n/a');
+});
+test('Git builds target price and preserve dashboard-managed variables and routes', () => {
+  const config=readFileSync(new URL('../wrangler.toml',import.meta.url),'utf8');
+  assert.match(config,/^name\s*=\s*"price"\s*$/m);
+  assert.match(config,/^main\s*=\s*"src\/index.js"\s*$/m);
+  assert.match(config,/^keep_vars\s*=\s*true\s*$/m);
+  assert.match(config,/^workers_dev\s*=\s*false\s*$/m);
+  assert.doesNotMatch(config,/^\s*(?:route|routes|account_id|zone_id|api_token)\s*=|^\s*\[vars\]/m);
 });

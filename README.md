@@ -2,7 +2,7 @@
 
 A small Bitcoin price chart for a Cloudflare Worker. One pasteable runtime file, vanilla JavaScript and SVG. No framework, build step, runtime dependencies, cookies or trackers.
 
-**Deployment target:** [price.blockdyor.com](https://price.blockdyor.com). You must deploy it yourself; publishing this repository does not create the live site.
+**Deployment target:** [price.blockdyor.com](https://price.blockdyor.com). Deploy by pasting the single Worker file, or connect the existing Worker to GitHub once and let Cloudflare deploy subsequent pushes. Publishing this repository alone does not connect a Cloudflare account.
 
 Standalone: blockdyor logo, price, chart, range controls and a back link, with a compact 24px top margin. Direct iframes and script widgets retain a small blockdyor logo and a visible website backlink, using the same colors and font. The first price and line are rendered server-side, so they do not depend on browser JavaScript. JavaScript adds automatic refresh, hover/touch and keyboard inspection, range changes and theme switching.
 
@@ -52,7 +52,25 @@ You need only **[`src/index.js`](src/index.js)**. It is self-contained, has no i
 3. Open **Settings → Domains & Routes → Add → Custom domain** and enter `price.blockdyor.com`. With the zone already on Cloudflare, DNS is created automatically.
 4. Optionally, under **Settings → Variables and Secrets**, add a plain-text `ALLOWED_ANCESTORS` variable. Use `https://blockdyor.com` to restrict embedding to that origin, or a space-separated list of allowed HTTP(S) origins. Default: `*`. Invalid configuration fails closed with `frame-ancestors 'none'`.
 
-No Cloudflare API token, account ID, KV, cron, D1, paid service or CLI deployment is required. This repository neither requests nor reads Cloudflare credentials. `wrangler.toml` is optional documentation with a placeholder name, not a deployment requirement.
+No Cloudflare API token, account ID, KV, cron, D1, paid service or CLI deployment is required for manual pasting. This repository neither requests nor reads Cloudflare credentials. The included `wrangler.toml` targets the existing Worker named `price` for optional Git-connected deployment; manual pasting still needs only `src/index.js`.
+
+## Automatic updates from GitHub
+
+Cloudflare Workers Builds can deploy this repository whenever `main` changes. Connect the **existing `price` Worker**, not a new Worker, under **Settings → Builds → Connect**. GitHub authorization stays in your Cloudflare dashboard; do not put Cloudflare tokens or account IDs in this repository or send them in chat.
+
+Use these build settings:
+
+- Repository: `blockdyor/btc-price`
+- Production branch: `main`
+- Root directory: repository root (leave the default)
+- Build command: `npm test` (recommended; no compilation is needed)
+- Deploy command: `npx wrangler deploy` (Cloudflare's default; runs inside Cloudflare, not by the assistant)
+
+The configuration's `name = "price"` must match the connected Worker name. `keep_vars = true` preserves dashboard-managed runtime variables such as `ALLOWED_ANCESTORS`; no `[vars]` block overwrites them. Domain routes remain dashboard-managed: the configuration has no `route`/`routes` keys and sets `workers_dev = false`, following Cloudflare's documented dashboard-routing mode. Use `price.blockdyor.com`; the `workers.dev` address is disabled by this configuration.
+
+After connecting, a push to `main` can update production automatically. Inspect **Build history/Deployments** for the first successful run. This is deployment on Git push, not downloading source from GitHub on each visitor request. The application remains one self-contained JavaScript file with no runtime dependencies; no new release or Worker-code change is needed for this configuration update. Dashboard edits to the Worker code can be replaced by the next Git deployment, so make lasting code changes in the repository.
+
+References: [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/), [build settings](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/), [dashboard variables and routing](https://developers.cloudflare.com/workers/wrangler/configuration/#source-of-truth).
 
 ### After-paste checklist
 
