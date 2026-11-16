@@ -56,7 +56,8 @@ No Cloudflare API token, account ID, KV, cron, D1, paid service or CLI deploymen
 
 - Open `/`: a price and SVG line, or calm `n/a` if the provider is unavailable. Test every range and both color themes.
 - Open `/api/price?days=1`: JSON containing only `{"prices":[[time,price],...]}`. Time is Unix milliseconds, at most 300 chronological points.
-- Open `/api/quote?cur=usd`: a current quote and retrieval timestamp. Watch the whole headline change on subsequent real quotes; use reduced-motion settings to disable flashes.
+- Open `/api/quote?cur=usd`: a current quote with separate publication and retrieval timestamps. Confirm the tab title equals the headline and the chart ends at that price; use reduced-motion settings to disable flashes.
+- Open `/favicon.png`: the same PNG favicon as blockdyor.com.
 - Open `/widget.js`: JavaScript, not an HTML page.
 - Put each embed snippet on a throwaway HTML page; confirm that the iframe hides the standalone logo/footer. Use two widgets to check independent ranges and dimensions.
 - On an Attegi page, toggle dark mode and confirm both frames follow without reloading.
@@ -64,21 +65,20 @@ No Cloudflare API token, account ID, KV, cron, D1, paid service or CLI deploymen
 
 ## Data and caching
 
-The historical chart uses [mempool.space historical prices](https://mempool.space/api/v1/historical-price?currency=USD), with the same range and currency support as v0.1.0. [API documentation](https://mempool.space/docs/api/rest) · [Terms](https://mempool.space/terms-of-service).
+All price data comes from **mempool.space**, without an API key: [historical prices](https://mempool.space/api/v1/historical-price?currency=USD) for the range chart, and [current prices](https://mempool.space/api/v1/prices) for the headline, tab title and rightmost chart point. [API documentation](https://mempool.space/docs/api/rest) · [Terms](https://mempool.space/terms-of-service).
 
-The headline uses the latest traded price from [Kraken's public ticker](https://docs.kraken.com/api-reference/market-data/get-ticker-information), requested server-side without an API key. It is an exchange-specific quote, not a global market average. The page checks it every five seconds while visible, and the Worker caches it for at most five seconds. **This is near-real-time polling, not a tick-by-tick stream.** `Checked HH:MM:SS UTC` means when the Worker retrieved the quote, not when the exchange executed the trade.
-
-- `/api/quote?cur=usd` returns `{price,currency,fetchedAt}`; `fetchedAt` is Unix milliseconds. A quote failure returns HTTP 503 with null values and `no-store`; old historical data is never substituted as a live quote. The chart can remain available when the live quote is unavailable.
-- The whole headline briefly turns green on a higher displayed price or red on a lower one, once for 450 ms. Initial and unchanged displayed values do not flash. Prices include cents; changes below the displayed precision do not flash. Reduced-motion preferences disable the animation.
-- Historical freshness remains 60 seconds for `days=1`, 300 seconds for other ranges. Those are generally hourly samples, not live ticks. The chart's title and hover values describe the history separately from the current headline.
-- Historical Cache API entries retain the last good response for up to 24 hours after retrieval. A stale entry can be returned while `waitUntil` refreshes it; without a context, the Worker attempts the provider synchronously and falls back on failure.
+- The headline, browser tab title and chart endpoint use the same quote and publication timestamp. Quotes are checked every five seconds while visible and once per minute while hidden, so the tab title can keep updating without full-speed background polling. Browsers may still throttle or suspend background tabs. The current point replaces the previous live endpoint instead of accumulating a fictitious tick for every browser poll. Historical refreshes reapply that endpoint, and the displayed line remains capped at 300 points. Older provider responses cannot move the displayed quote backwards.
+- `Updated … UTC` shows mempool's publication time, not when the Worker checked it. **Polling does not make mempool publish faster:** its current-price feed is not tick-by-tick, and the historical samples are generally hourly. The interface can remain unchanged between provider updates.
+- `/api/quote?cur=usd` returns `{price,currency,fetchedAt,time}`. Both timestamps are Unix milliseconds: `time` is publication time, `fetchedAt` is retrieval time. Invalid, future or more-than-one-hour-old upstream quotes are rejected. Failure returns HTTP 503 with null values and `no-store`; historical values are not substituted as current. The headline and tab title show `n/a`, while available history remains visible.
+- The whole price briefly turns green on a higher displayed value or red on a lower one for 450 ms. Initial and unchanged values do not flash; reduced-motion preferences disable the animation. Prices are displayed to cents consistently in the headline and tab title.
+- Historical freshness is 60 seconds for `days=1`, 300 seconds for other ranges. Historical Cache API entries retain the last good response for up to 24 hours after retrieval. A stale entry can be returned while `waitUntil` refreshes it; without a context, the Worker attempts the provider synchronously and falls back on failure.
 - Fresh historical responses include `stale-while-revalidate=60`. Stale history is marked `X-Price-Cache: stale` and `cached` in the chart title, with `no-store` so a browser cannot extend the fallback window.
-- Historical responses contain only validated, sorted, deduplicated `[time,price]` pairs, at most 300, retaining both endpoints. Cold historical failure returns HTTP 503 with `{"prices":[]}`. The page itself remains HTTP 200.
-- The percentage compares the current quote with the first available historical sample for the selected range. The sources can differ; the headline need not equal the chart's last hourly point.
+- Historical API responses contain only validated, sorted, deduplicated `[time,price]` pairs, at most 300, retaining both endpoints. Cold historical failure returns HTTP 503 with `{"prices":[]}`. The page remains HTTP 200.
+- The percentage compares the current displayed quote with the first available historical sample for the selected range. The live endpoint uses the actual provider timestamp; it does not rewrite an old hourly sample's timestamp.
 
-Both providers are accessed only by the Worker. API access remains subject to their respective terms; public/keyless access is not a guarantee of unrestricted data licensing. Neither provider has a guaranteed uptime. Cache API entries are local to each Cloudflare data center and may be evicted; 24 hours is a maximum history age, not a durability guarantee.
+The provider is accessed only by the Worker. Public/keyless API access remains subject to mempool's terms and is not a blanket guarantee about data licensing or uptime. Cache API entries are local to each Cloudflare data center and may be evicted; 24 hours is a maximum history age, not a durability guarantee. Free-plan request/CPU limits apply; no paid plan or bindings are enabled.
 
-Five-second polling consumes more Worker requests than the original chart. Free-plan request/CPU limits still apply; this code does not enable a paid plan or require paid bindings. Hidden tabs pause polling and refresh when visible again.
+The blockdyor favicon is served through `/favicon.png`, copied byte-for-byte from the fixed site icon URL and cached for a day. The browser still requests only the Worker origin; favicon failure does not break the page.
 
 ## Privacy and security
 
