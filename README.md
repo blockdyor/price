@@ -4,7 +4,7 @@ A small Bitcoin price chart for a Cloudflare Worker. One pasteable runtime file,
 
 **Deployment target:** [price.blockdyor.com](https://price.blockdyor.com). You must deploy it yourself; publishing this repository does not create the live site.
 
-Standalone: blockdyor logo, price, chart, range controls and a back link. Inside an iframe: just the chart. The first price and line are rendered server-side, so they do not depend on browser JavaScript. JavaScript adds automatic refresh, hover/touch and keyboard inspection, range changes and theme switching.
+Standalone: blockdyor logo, price, chart, range controls and a back link, with a compact 24px top margin. Direct iframes and script widgets retain a small blockdyor logo and a visible website backlink, using the same colors and font. The first price and line are rendered server-side, so they do not depend on browser JavaScript. JavaScript adds automatic refresh, hover/touch and keyboard inspection, range changes and theme switching.
 
 ## Screenshots
 
@@ -12,6 +12,8 @@ Captured from the local Worker with real API data; these images are samples, not
 
 ![Light standalone Bitcoin chart](docs/light.png)
 ![Dark standalone Bitcoin chart](docs/dark.png)
+
+![Branded iframe and widget examples](docs/embed.png)
 
 ## Embed
 
@@ -26,7 +28,7 @@ Paste either snippet into a Ghost HTML card or any HTML page. No Ghost installat
 <script src="https://price.blockdyor.com/widget.js"></script>
 ```
 
-The widget script supports several `[data-btc]` elements, lazy-loads titled iframes, and follows Attegi's `theme-dark` class on `<html>`. Theme changes are sent to existing frames without reloading them. Direct iframe embeds use the operating-system theme unless you pass `theme=light` or `theme=dark`.
+The widget script supports several `[data-btc]` elements, lazy-loads titled iframes, and follows Attegi's `theme-dark` class on `<html>`. Theme changes are sent to existing frames without reloading them; both chart and logo follow the selected theme. Direct iframe embeds use the operating-system theme unless you pass `theme=light` or `theme=dark`. The linked logo opens blockdyor.com at the top level; the explicit backlink opens the site in a new tab. Existing 320 × 140 embeds still fit without scrolling; use 180px height when showing range controls.
 
 ### Parameters
 
@@ -43,7 +45,7 @@ Widget attributes: `data-days`, `data-cur`, `data-theme`, `data-controls`, `data
 
 ## Deploy by hand
 
-You need only **[`src/index.js`](src/index.js)**. It is self-contained, has no imports, and exports only `export default`.
+You need only **[`src/index.js`](src/index.js)**. It is self-contained, has no imports, and exports only `export default`. This remains JavaScript: no Rust, WebAssembly, extra runtime files or build step.
 
 1. In the Cloudflare dashboard, open **Workers & Pages → Create → Create Worker**, name it **price**, then **Deploy**.
 2. Select **Edit code**, replace everything with the entire contents of `src/index.js`, then **Deploy**.
@@ -59,7 +61,7 @@ No Cloudflare API token, account ID, KV, cron, D1, paid service or CLI deploymen
 - Open `/api/quote?cur=usd`: a current quote with separate publication and retrieval timestamps. Confirm the tab title equals the headline and the chart ends at that price; use reduced-motion settings to disable flashes.
 - Open `/favicon.png`: the same PNG favicon as blockdyor.com.
 - Open `/widget.js`: JavaScript, not an HTML page.
-- Put each embed snippet on a throwaway HTML page; confirm that the iframe hides the standalone logo/footer. Use two widgets to check independent ranges and dimensions.
+- Put each embed snippet on a throwaway HTML page; confirm that the compact linked logo and website backlink remain visible. Only the standalone theme button and full footer are hidden. Use two widgets to check independent ranges and dimensions.
 - On an Attegi page, toggle dark mode and confirm both frames follow without reloading.
 - Inspect the browser's network panel: the frame requests only this Worker's origin. Inspect the response headers for CSP, `nosniff` and `no-referrer`; there must be no `X-Frame-Options`.
 
@@ -69,6 +71,7 @@ All price data comes from **mempool.space**, without an API key: [historical pri
 
 - The headline, browser tab title and chart endpoint use the same quote and publication timestamp. Quotes are checked every five seconds while visible and once per minute while hidden, so the tab title can keep updating without full-speed background polling. Browsers may still throttle or suspend background tabs. The current point replaces the previous live endpoint instead of accumulating a fictitious tick for every browser poll. Historical refreshes reapply that endpoint, and the displayed line remains capped at 300 points. Older provider responses cannot move the displayed quote backwards.
 - `Updated … UTC` shows mempool's publication time, not when the Worker checked it. **Polling does not make mempool publish faster:** its current-price feed is not tick-by-tick, and the historical samples are generally hourly. The interface can remain unchanged between provider updates.
+- A quote served from the Worker's cache shows `Cached … UTC`, using that same original publication timestamp. The quote API exposes `X-Price-Cache: fresh` for a cache hit and `miss` for an upstream fetch; its JSON schema is unchanged. When only history is cached, the caption adds `chart cached` instead of mislabelling the current quote. Cache status never turns retrieval time into a newer price timestamp.
 - `/api/quote?cur=usd` returns `{price,currency,fetchedAt,time}`. Both timestamps are Unix milliseconds: `time` is publication time, `fetchedAt` is retrieval time. Invalid, future or more-than-one-hour-old upstream quotes are rejected. Failure returns HTTP 503 with null values and `no-store`; historical values are not substituted as current. The headline and tab title show `n/a`, while available history remains visible.
 - The whole price briefly turns green on a higher displayed value or red on a lower one for 450 ms. Initial and unchanged values do not flash; reduced-motion preferences disable the animation. Prices are displayed to cents consistently in the headline and tab title.
 - Historical freshness is 60 seconds for `days=1`, 300 seconds for other ranges. Historical Cache API entries retain the last good response for up to 24 hours after retrieval. A stale entry can be returned while `waitUntil` refreshes it; without a context, the Worker attempts the provider synchronously and falls back on failure.
