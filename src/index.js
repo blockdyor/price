@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// btc-price: paste this entire file into the Cloudflare Worker editor.
+// price: paste this entire file into the Cloudflare Worker editor.
 const DAYS = ['1', '7', '30', '90', '365'];
 const CURRENCIES = ['usd', 'eur', 'gbp', 'chf'];
 const SECURITY = { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' };
@@ -54,6 +54,30 @@ async function price(url, ctx) {
   }
 }
 
+async function quote(url) {
+  const cur = choose(url.searchParams.get('cur'), CURRENCIES, 'usd');
+  const pair = { usd: 'XBTUSD', eur: 'XBTEUR', gbp: 'XBTGBP', chf: 'XBTCHF' }[cur];
+  const key = new Request(url.origin + '/api/quote?cur=' + cur), cache = globalThis.caches?.default;
+  const reply = (body, seconds = 5) => new Response(body, { headers: { ...SECURITY, 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=0, s-maxage=' + seconds } });
+  try {
+    const saved = await cache?.match(key);
+    const age = saved ? Date.now() - Number(saved.headers.get('X-Fetched-At')) : Infinity;
+    if (saved && age >= 0 && age < 5000) return reply(saved.body, Math.max(0, Math.floor((5000 - age) / 1000)));
+  } catch { /* Cache failure must not hide a usable quote. */ }
+  try {
+    const response = await fetch('https://api.kraken.com/0/public/Ticker?pair=' + pair, { signal: AbortSignal.timeout(4000), cf: { cacheTtl: 0 } });
+    if (!response.ok) throw new Error('Quote unavailable');
+    const data = await response.json(), tickers = Object.values(data.result || {});
+    const value = Number(tickers[0]?.c?.[0]);
+    if (!Array.isArray(data.error) || data.error.length || tickers.length !== 1 || !Number.isFinite(value) || value <= 0) throw new Error('Invalid quote');
+    const fetchedAt = Date.now(), body = JSON.stringify({ price: value, currency: cur, fetchedAt });
+    try { await cache?.put(key, new Response(body, { headers: { 'Cache-Control': 'public, max-age=5', 'X-Fetched-At': String(fetchedAt) } })); } catch { /* Return the good quote even if the cache is full. */ }
+    return reply(body);
+  } catch {
+    return Response.json({ price: null, currency: cur, fetchedAt: null }, { status: 503, headers: { ...SECURITY, 'Cache-Control': 'no-store' } });
+  }
+}
+
 function plot(prices, cur) {
   if (prices.length < 2) return { start: 0, points: '', box: '0 0 300 80', value: 'n/a', change: '', label: 'Bitcoin price unavailable', caption: 'Price temporarily unavailable', direction: 'up' };
   const first = prices[0], last = prices.at(-1), values = prices.map(p => p[1]);
@@ -64,7 +88,7 @@ function plot(prices, cur) {
 }
 
 const PAGE = (nonce, options, model, embedded) => `<!doctype html>
-<html lang="en" data-theme="${options.theme}" data-controls="${options.controls}"${embedded ? ' data-embed="1"' : ''}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>Bitcoin price — blockdyor</title>
+<html lang="en" data-theme="${options.theme}" data-controls="${options.controls}"${embedded ? ' data-embed="1"' : ''}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>price</title>
 <script nonce="${nonce}">if(self!==top)document.documentElement.dataset.embed='1';</script>
 <style nonce="${nonce}">
 :root{--bg:#fff;--fg:#000;--mut:#5B5F66;--bd:rgb(0 0 0/.08);--up:#10b981;--dn:#ef4444;--line-up:#07815a;color-scheme:light}
@@ -79,22 +103,34 @@ main{width:min(420px,calc(100% - 40px));margin:clamp(32px,12vh,100px) auto}heade
 #chart{width:100%;flex:1;min-height:0;margin:12px 0;touch-action:pan-y;color:var(--${model.direction === 'up' ? 'line-up' : 'dn'})}polyline{fill:none;stroke:currentColor;stroke-width:1.6;vector-effect:non-scaling-stroke;stroke-linejoin:round}
 #tip{position:absolute;top:53px;left:16px;pointer-events:none;background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:6px 8px;font-size:11px;max-width:calc(100% - 32px)}
 #ranges{display:flex;gap:4px;margin-top:12px}#ranges a{flex:1;text-align:center;font-size:12px;border-radius:6px;padding:6px 2px}#ranges a[aria-current=true]{background:var(--fg);color:var(--bg);text-decoration:none}footer{display:flex;justify-content:space-between;gap:12px;margin-top:20px;font-size:11px;color:var(--mut)}.embed-brand{display:none}
+#price.tick-up{animation:tick-up .45s ease-out}#price.tick-down{animation:tick-down .45s ease-out}@keyframes tick-up{0%,65%{color:var(--line-up)}100%{color:var(--fg)}}@keyframes tick-down{0%,65%{color:var(--dn)}100%{color:var(--fg)}}
 :root[data-embed] .standalone{display:none}:root[data-embed] main{width:auto;margin:0}:root[data-embed] #card{height:100dvh;padding:10px 12px}:root[data-embed] #price{font-size:22px}:root[data-embed] #chart{margin:6px 0}:root[data-embed] #tip{top:37px;left:12px}:root[data-embed]:not([data-controls="1"]) #ranges{display:none}:root[data-embed] #ranges{margin-top:4px}:root[data-embed] .embed-brand{display:inline}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
 </style></head><body><main>
 <header class="standalone"><a class="brand" href="https://blockdyor.com"><img src="data:image/webp;base64,UklGRkwDAABXRUJQVlA4WAoAAAAQAAAAPwEASgAAQUxQSM4CAAABkIVt29lI/9q2bdu2jSPbtm3bdsaeaTuZdFbDnq1t29v5F2/y/eV4NiIm4BeHU5jF0z/gcA2zv64cKsyWQzn0ZI74J5psBffQKjt0Hsk2JSO3ZFl+WM9d+3XOyfvuBJy1ByFxPsp/IE2K84mSxC6zgnUSsbygCZLWcyWtpZWEcwiaIxFfCOohwcNZCYUl3IByQCLm1bJUgutQ+mOS9vMqog2pLBfGifUFHeJaf9bKmMY6BnOcT5A7F0uawuGLXITyHPekPOTEYlqCOLyMMr7i2n86Hv7k/sA4Hs6HJUny0ER8Z7mMtbC7idi3FiyG0larBXeYiFNrwfKCUlWoBSeZcG5Cuhq14BET8aOgydaRvRZWTMQ2tWBBxth+E/SoBetfNsFHlImM6Ga5qhx3ZMRbHO5GuV9yOJMR3TkMFZQmikNvJrbgNw6HM2KIoEnW0Z7j6kx72k8cLmQau3L4oyyDUyiTKZ6Wq6zSgXIT7aTMoLghRVQk8hNUQJRiS20Fpf+IFmjpQpmelJcHCqUEq0QgH2fpl0Oq1xU2prz2gb7v0AsfnMNpKdMVdnFIZBXh+ZwW9WRk3l8k3rRDZZrA/rEWOTVxkB3aacaxF0YcbI84MampiRR3FGyBKiodKbfQLspMm8pLKGhdk1Vyoh2C2glKp7LQeq7qiLPbwbpMXNZ2+JSOOKwdrITStWwHt+qIza1L1sERKEObdnCfjvhGUIl2sJ9eBzf0g+MpedthLx2xbztY2nrIQxidpB7GifWZ2EOc2Mu6VFcgdXculqRa4geH8xksT1F/yInFGD3ZCoMstouAtOdkOIayTyZWFjRHJragrFDgTkonhTiasloRu0ZQIVmBQy3kKhMLCGgqQ30xSixcWBxqcgypieXMZnNMTIw5DiWXn2L8V1EUo9Fo1LVuDvPEneR7x7U/z8DiWpN/yBV8JQxfCQsLCwtMb2cAVlA4IFgAAABwCACdASpAAUsAPm02mUmkIyKhIGgAgA2JaW7hdfAAO6HVUmyYh1VJsmIdVSbJiHVUmyYh1VJsmIdVSbJiHVUmyYh1VJsmIdVSbIIAAP7/uxAAAAAAAAAA" alt="blockdyor" width="320" height="75"></a><button id="theme" type="button" aria-label="Change color theme">◐</button></header>
 <section id="card" aria-label="Bitcoin price"><div class="row"><span id="price" aria-live="polite">${model.value}</span><span id="change">${model.change}</span></div>
-<svg id="chart" viewBox="${model.box}" preserveAspectRatio="none" role="img" tabindex="0" aria-label="${model.label}"><polyline id="line" points="${model.points}"/><ellipse id="dot" fill="currentColor" visibility="hidden"/></svg>
+<svg id="chart" viewBox="${model.box}" preserveAspectRatio="none" role="img" tabindex="0" aria-label="${model.label}" title="${model.historyCaption}"><polyline id="line" points="${model.points}"/><ellipse id="dot" fill="currentColor" visibility="hidden"/></svg>
 <div id="tip" hidden aria-hidden="true"></div><span id="announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span><div class="row muted"><span id="caption">${model.caption}</span><a class="embed-brand" href="https://blockdyor.com" target="_blank" rel="noopener">blockdyor</a></div>
 <nav id="ranges" aria-label="Chart range">${DAYS.map((d,i) => '<a href="?days=' + d + '&amp;cur=' + options.cur + '&amp;theme=' + options.theme + '&amp;controls=' + options.controls + '" data-days="' + d + '" aria-current="' + (d === options.days) + '">' + ['24h','7d','30d','90d','1y'][i] + '</a>').join('')}</nav></section>
 <footer class="standalone"><a href="https://blockdyor.com">← Back to blockdyor.com</a><a href="https://github.com/blockdyor/btc-price">Source</a></footer></main>
 <script nonce="${nonce}">
 (()=>{
 const root=document.documentElement,el=id=>document.getElementById(id),chart=el('chart'),line=el('line'),dot=el('dot'),tip=el('tip'),cur='${options.cur}';let days='${options.days}',start=${model.start};
-const money=new Intl.NumberFormat('en',{style:'currency',currency:cur.toUpperCase(),maximumFractionDigits:0}),time=new Intl.DateTimeFormat('en',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'UTC'});
-let points=Array.from(line.points,p=>[start+p.x*3600000,-p.y]),index=Math.max(0,points.length-1),controller,timer;
-const hide=()=>{dot.setAttribute('visibility','hidden');tip.hidden=true};
+const money=new Intl.NumberFormat('en',{style:'currency',currency:cur.toUpperCase(),minimumFractionDigits:2,maximumFractionDigits:2}),time=new Intl.DateTimeFormat('en',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'UTC'}),clock=new Intl.DateTimeFormat('en',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false,timeZone:'UTC'});
+let points=Array.from(line.points,p=>[start+p.x*3600000,-p.y]),index=Math.max(0,points.length-1),controller,timer,quoteTimer,blinkTimer,quoteBusy=false,lastPrice=null,currentQuote=${JSON.stringify(model.quote)};
+const priceEl=el('price'),hide=()=>{dot.setAttribute('visibility','hidden');tip.hidden=true};
+function showQuote(q,flash=false){
+  currentQuote=q;priceEl.classList.remove('tick-up','tick-down');clearTimeout(blinkTimer);
+  if(!q){lastPrice=null;priceEl.textContent='n/a';el('change').textContent='';el('caption').textContent='Live quote unavailable';return;}
+  const value=Math.round(q.price*100)/100;
+  if(flash&&lastPrice!==null&&value!==lastPrice){priceEl.classList.add(value>lastPrice?'tick-up':'tick-down');blinkTimer=setTimeout(()=>priceEl.classList.remove('tick-up','tick-down'),450);}
+  priceEl.textContent=money.format(value);lastPrice=value;el('caption').textContent='Checked '+clock.format(q.fetchedAt)+' UTC';
+  const change=points.length?(value/points[0][1]-1)*100:null;
+  el('change').textContent=change===null?'':(change>=0?'↗ +':'↘ ')+change.toFixed(2)+'%';
+}
+function scheduleQuote(){clearTimeout(quoteTimer);quoteTimer=setTimeout(()=>{if(!document.hidden)loadQuote()},5000);}
+async function loadQuote(){if(quoteBusy)return;quoteBusy=true;try{const r=await fetch('/api/quote?cur='+cur,{cache:'no-store',signal:AbortSignal.timeout(4500)});if(!r.ok)throw Error();const q=await r.json();if(!Number.isFinite(q.price)||q.price<=0||!Number.isFinite(q.fetchedAt)||q.currency!==cur)throw Error();showQuote(q,true);}catch{showQuote(null);}finally{quoteBusy=false;scheduleQuote();}}
 function inspect(i,announce=false){if(!points.length)return;index=Math.max(0,Math.min(points.length-1,i));const p=points[index],box=chart.viewBox.baseVal,r=chart.getBoundingClientRect();dot.setAttribute('cx',(p[0]-start)/3600000);dot.setAttribute('cy',-p[1]);dot.setAttribute('rx',box.width/Math.max(1,r.width)*3);dot.setAttribute('ry',box.height/Math.max(1,r.height)*3);dot.setAttribute('visibility','visible');tip.textContent=money.format(p[1])+' · '+time.format(p[0])+' UTC';tip.hidden=false;if(announce)el('announcement').textContent=tip.textContent;}
 chart.addEventListener('pointermove',e=>{if(!points.length)return;const r=chart.getBoundingClientRect(),t=start+Math.max(0,Math.min(1,(e.clientX-r.left)/r.width))*(points.at(-1)[0]-start);let best=0;points.forEach((p,i)=>{if(Math.abs(p[0]-t)<Math.abs(points[best][0]-t))best=i});inspect(best)});
 chart.addEventListener('pointerleave',hide);chart.addEventListener('blur',hide);chart.addEventListener('keydown',e=>{if(['ArrowLeft','ArrowRight','Home','End','Escape'].includes(e.key)){e.preventDefault();if(e.key==='Escape')hide();else inspect(e.key==='Home'?0:e.key==='End'?points.length-1:index+(e.key==='ArrowRight'?1:-1),true);}});
@@ -102,14 +138,14 @@ function schedule(){clearTimeout(timer);timer=setTimeout(()=>{if(!document.hidde
 async function load(){controller?.abort();controller=new AbortController();const active=controller;hide();
 try{const r=await fetch('/api/price?days='+days+'&cur='+cur,{signal:AbortSignal.any([active.signal,AbortSignal.timeout(10000)])});if(!r.ok)throw Error();const d=await r.json();if(active!==controller)return;if(!Array.isArray(d.prices)||d.prices.length<2)throw Error();points=d.prices;start=points[0][0];
 const values=points.map(p=>p[1]),lo=Math.min(...values),hi=Math.max(...values),pad=(hi-lo)*.06||1,last=points.at(-1),change=(last[1]/points[0][1]-1)*100,up=change>=0;
-chart.setAttribute('viewBox',[0,-hi-pad,(last[0]-start)/3600000,hi-lo+pad*2].join(' '));line.setAttribute('points',points.map(p=>(p[0]-start)/3600000+','+-p[1]).join(' '));chart.style.color=up?'var(--line-up)':'var(--dn)';el('price').textContent=money.format(last[1]);el('change').textContent=(up?'↗ +':'↘ ')+change.toFixed(2)+'%';el('caption').textContent=time.format(last[0])+' UTC'+(r.headers.get('x-price-cache')==='stale'?' · cached':'');chart.setAttribute('aria-label','Bitcoin price, '+days+' days, '+money.format(last[1])+', '+(up?'up ':'down ')+Math.abs(change).toFixed(2)+' percent');index=points.length-1;
-}catch(e){if(active!==controller)return;points=[];line.removeAttribute('points');el('price').textContent='n/a';el('change').textContent='';el('caption').textContent='Price temporarily unavailable';chart.setAttribute('aria-label','Bitcoin price unavailable');}
-if(active===controller)schedule();}
+chart.setAttribute('viewBox',[0,-hi-pad,(last[0]-start)/3600000,hi-lo+pad*2].join(' '));line.setAttribute('points',points.map(p=>(p[0]-start)/3600000+','+-p[1]).join(' '));chart.style.color=up?'var(--line-up)':'var(--dn)';chart.setAttribute('aria-label','Bitcoin price history, '+days+' days, '+money.format(last[1])+', '+(up?'up ':'down ')+Math.abs(change).toFixed(2)+' percent');index=points.length-1;
+}catch(e){if(active!==controller)return;points=[];line.removeAttribute('points');chart.setAttribute('aria-label','Bitcoin price history unavailable');}
+if(active===controller){showQuote(currentQuote);schedule();}}
 el('ranges').addEventListener('click',e=>{const a=e.target.closest('[data-days]');if(!a)return;e.preventDefault();days=a.dataset.days;document.querySelectorAll('[data-days]').forEach(b=>b.setAttribute('aria-current',String(b.dataset.days===days)));load();});
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)load()});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){load();loadQuote()}});
 el('theme').addEventListener('click',()=>{root.dataset.theme=({auto:'dark',dark:'light',light:'auto'})[root.dataset.theme];el('theme').setAttribute('aria-label','Color theme: '+root.dataset.theme+'. Change theme');});
 window.addEventListener('message',e=>{if(e.source===parent&&self!==top&&e.data?.type==='btc-theme'&&['light','dark','auto'].includes(e.data.theme))root.dataset.theme=e.data.theme;});
-schedule();
+showQuote(currentQuote);schedule();scheduleQuote();
 })();
 </script></body></html>`;
 
@@ -123,13 +159,20 @@ export default {
     if (req.method !== 'GET' && req.method !== 'HEAD') return new Response('Method not allowed', { status: 405, headers: { ...SECURITY, Allow: 'GET, HEAD' } });
     let response;
     if (url.pathname === '/api/price') response = await price(url, ctx);
+    else if (url.pathname === '/api/quote') response = await quote(url);
     else if (url.pathname === '/widget.js') response = new Response(widget(url.origin), { headers: { ...SECURITY, 'Content-Type': 'application/javascript;charset=utf-8', 'Cache-Control': 'public, max-age=3600' } });
     else if (url.pathname === '/') {
       const nonce = crypto.randomUUID().replaceAll('-', '');
       const options = { days: choose(url.searchParams.get('days'), DAYS, '7'), cur: choose(url.searchParams.get('cur'), CURRENCIES, 'usd'), theme: choose(url.searchParams.get('theme'), ['light', 'dark', 'auto'], 'auto'), controls: url.searchParams.get('controls') === '1' ? '1' : '0' };
-      const data = await price(url, ctx);
-      const model = plot((await data.json()).prices, options.cur);
+      const [data, live] = await Promise.all([price(url, ctx), quote(url)]);
+      const history = (await data.json()).prices, model = plot(history, options.cur);
+      model.quote = live.ok ? await live.json() : null;
       if (data.headers.get('X-Price-Cache') === 'stale') model.caption += ' · cached';
+      model.historyCaption = model.caption;
+      model.value = model.quote ? new Intl.NumberFormat('en', { style: 'currency', currency: options.cur.toUpperCase(), minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(model.quote.price) : 'n/a';
+      const change = model.quote && history.length ? (model.quote.price / history[0][1] - 1) * 100 : null;
+      model.change = change === null ? '' : (change >= 0 ? '↗ +' : '↘ ') + change.toFixed(2) + '%';
+      model.caption = model.quote ? 'Checked ' + new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'UTC' }).format(model.quote.fetchedAt) + ' UTC' : 'Live quote unavailable';
       response = new Response(PAGE(nonce, options, model, req.headers.get('Sec-Fetch-Dest') === 'iframe'), { headers: { ...SECURITY, 'Content-Type': 'text/html;charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; script-src 'nonce-" + nonce + "'; style-src 'nonce-" + nonce + "'; connect-src 'self'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors " + ancestors(env.ALLOWED_ANCESTORS) } });
     } else response = new Response('Not found', { status: 404, headers: SECURITY });
     return req.method === 'HEAD' ? new Response(null, { status: response.status, headers: response.headers }) : response;

@@ -1,4 +1,4 @@
-# btc-price
+# price
 
 A small Bitcoin price chart for a Cloudflare Worker. One pasteable runtime file, vanilla JavaScript and SVG. No framework, build step, runtime dependencies, cookies or trackers.
 
@@ -45,10 +45,10 @@ Widget attributes: `data-days`, `data-cur`, `data-theme`, `data-controls`, `data
 
 You need only **[`src/index.js`](src/index.js)**. It is self-contained, has no imports, and exports only `export default`.
 
-1. In the Cloudflare dashboard, open **Workers & Pages → Create → Create Worker**, give it a name, then **Deploy**.
+1. In the Cloudflare dashboard, open **Workers & Pages → Create → Create Worker**, name it **price**, then **Deploy**.
 2. Select **Edit code**, replace everything with the entire contents of `src/index.js`, then **Deploy**.
 3. Open **Settings → Domains & Routes → Add → Custom domain** and enter `price.blockdyor.com`. With the zone already on Cloudflare, DNS is created automatically.
-4. Optionally, under **Settings → Variables**, add a plain-text `ALLOWED_ANCESTORS` variable. Use `https://blockdyor.com` to restrict embedding to that origin, or a space-separated list of allowed HTTP(S) origins. Default: `*`. Invalid configuration fails closed with `frame-ancestors 'none'`.
+4. Optionally, under **Settings → Variables and Secrets**, add a plain-text `ALLOWED_ANCESTORS` variable. Use `https://blockdyor.com` to restrict embedding to that origin, or a space-separated list of allowed HTTP(S) origins. Default: `*`. Invalid configuration fails closed with `frame-ancestors 'none'`.
 
 No Cloudflare API token, account ID, KV, cron, D1, paid service or CLI deployment is required. This repository neither requests nor reads Cloudflare credentials. `wrangler.toml` is optional documentation with a placeholder name, not a deployment requirement.
 
@@ -56,6 +56,7 @@ No Cloudflare API token, account ID, KV, cron, D1, paid service or CLI deploymen
 
 - Open `/`: a price and SVG line, or calm `n/a` if the provider is unavailable. Test every range and both color themes.
 - Open `/api/price?days=1`: JSON containing only `{"prices":[[time,price],...]}`. Time is Unix milliseconds, at most 300 chronological points.
+- Open `/api/quote?cur=usd`: a current quote and retrieval timestamp. Watch the whole headline change on subsequent real quotes; use reduced-motion settings to disable flashes.
 - Open `/widget.js`: JavaScript, not an HTML page.
 - Put each embed snippet on a throwaway HTML page; confirm that the iframe hides the standalone logo/footer. Use two widgets to check independent ranges and dimensions.
 - On an Attegi page, toggle dark mode and confirm both frames follow without reloading.
@@ -63,17 +64,21 @@ No Cloudflare API token, account ID, KV, cron, D1, paid service or CLI deploymen
 
 ## Data and caching
 
-The Worker calls one keyless public endpoint: [mempool.space historical prices](https://mempool.space/api/v1/historical-price?currency=USD). [API documentation](https://mempool.space/docs/api/rest) · [Terms](https://mempool.space/terms-of-service).
+The historical chart uses [mempool.space historical prices](https://mempool.space/api/v1/historical-price?currency=USD), with the same range and currency support as v0.1.0. [API documentation](https://mempool.space/docs/api/rest) · [Terms](https://mempool.space/terms-of-service).
 
-These are historical samples, generally hourly for recent data—not a streaming or tick-level quote. The displayed timestamp is the latest sample's time, not the time the cache was refreshed. The percentage is the change between the first and last available samples in the selected range. Downsampling retains both endpoints.
+The headline uses the latest traded price from [Kraken's public ticker](https://docs.kraken.com/api-reference/market-data/get-ticker-information), requested server-side without an API key. It is an exchange-specific quote, not a global market average. The page checks it every five seconds while visible, and the Worker caches it for at most five seconds. **This is near-real-time polling, not a tick-by-tick stream.** `Checked HH:MM:SS UTC` means when the Worker retrieved the quote, not when the exchange executed the trade.
 
-- Freshness: 60 seconds for `days=1`; 300 seconds for other ranges.
-- Canonical per-range/currency Cache API entries retain the last good response for up to 24 hours after retrieval. A stale entry can be returned immediately while `waitUntil` refreshes it. Without an execution context, the Worker attempts the provider synchronously and falls back on errors, including HTTP 429, malformed JSON and timeouts.
-- Fresh responses include `stale-while-revalidate=60`. Stale fallback responses are marked `X-Price-Cache: stale`, labelled `cached` on the chart, and sent with `no-store` so a browser cannot extend the fallback window.
-- Only validated `[time, price]` pairs reach the browser; unrelated provider fields are discarded. Results are sorted, deduplicated and reduced to at most 300 points.
-- A cold-cache failure returns HTTP 503 with `{"prices":[]}` from the API, while the page itself remains HTTP 200 with `n/a`.
+- `/api/quote?cur=usd` returns `{price,currency,fetchedAt}`; `fetchedAt` is Unix milliseconds. A quote failure returns HTTP 503 with null values and `no-store`; old historical data is never substituted as a live quote. The chart can remain available when the live quote is unavailable.
+- The whole headline briefly turns green on a higher displayed price or red on a lower one, once for 450 ms. Initial and unchanged displayed values do not flash. Prices include cents; changes below the displayed precision do not flash. Reduced-motion preferences disable the animation.
+- Historical freshness remains 60 seconds for `days=1`, 300 seconds for other ranges. Those are generally hourly samples, not live ticks. The chart's title and hover values describe the history separately from the current headline.
+- Historical Cache API entries retain the last good response for up to 24 hours after retrieval. A stale entry can be returned while `waitUntil` refreshes it; without a context, the Worker attempts the provider synchronously and falls back on failure.
+- Fresh historical responses include `stale-while-revalidate=60`. Stale history is marked `X-Price-Cache: stale` and `cached` in the chart title, with `no-store` so a browser cannot extend the fallback window.
+- Historical responses contain only validated, sorted, deduplicated `[time,price]` pairs, at most 300, retaining both endpoints. Cold historical failure returns HTTP 503 with `{"prices":[]}`. The page itself remains HTTP 200.
+- The percentage compares the current quote with the first available historical sample for the selected range. The sources can differ; the headline need not equal the chart's last hourly point.
 
-Cloudflare's Cache API is local to each data center and may evict entries early. A 24-hour fallback is a maximum age, not a durability guarantee. The provider has no guaranteed uptime. No provider attribution requirement was found in the published terms inspected on November 15, 2026; check for later changes before reuse.
+Both providers are accessed only by the Worker. API access remains subject to their respective terms; public/keyless access is not a guarantee of unrestricted data licensing. Neither provider has a guaranteed uptime. Cache API entries are local to each Cloudflare data center and may be evicted; 24 hours is a maximum history age, not a durability guarantee.
+
+Five-second polling consumes more Worker requests than the original chart. Free-plan request/CPU limits still apply; this code does not enable a paid plan or require paid bindings. Hidden tabs pause polling and refresh when visible again.
 
 ## Privacy and security
 
@@ -92,7 +97,7 @@ npm test
 npm run dev
 ```
 
-`npm run dev` serves `http://localhost:8787`. Restart it after editing the Worker. This plain Node server has no Cloudflare Cache API; caching is exercised by the tests with an in-memory mock. Tests invoke `worker.fetch(new Request(...), env)` directly and mock only external fetch/cache boundaries. No Cloudflare runtime or account is needed.
+`npm run dev` serves `http://localhost:8787`. Restart it after editing the Worker. This plain Node server has no Cloudflare Cache API; caching is exercised by the tests with an in-memory mock. Tests invoke `worker.fetch(new Request(...), env)` directly and mock external fetch/cache boundaries; client tests execute the generated script with minimal DOM/timer primitives. No Cloudflare runtime or account is needed.
 
 If Hermes runs remotely, that server's localhost is not your desktop's localhost. Hermes' side-pane file preview disables scripts; use an inline `::preview` for an interactive captured-data preview, not as proof of a live Worker deployment.
 
