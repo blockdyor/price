@@ -121,10 +121,10 @@ const money=new Intl.NumberFormat('en',{style:'currency',currency:cur.toUpperCas
 let points=Array.from(line.points,p=>[start+p.x*3600000,-p.y]),index=Math.max(0,points.length-1),controller,timer,quoteTimer,blinkTimer,quoteBusy=false,lastPrice=null,currentQuote=${JSON.stringify(model.quote)};
 const priceEl=el('price'),hide=()=>{dot.setAttribute('visibility','hidden');tip.hidden=true};
 function showQuote(q,flash=false){
-  currentQuote=q;priceEl.classList.remove('tick-up','tick-down');clearTimeout(blinkTimer);
-  if(!q){lastPrice=null;priceEl.textContent='n/a';el('change').textContent='';el('caption').textContent='Live quote unavailable';return;}
+  currentQuote=q;
+  if(!q){priceEl.classList.remove('tick-up','tick-down');clearTimeout(blinkTimer);lastPrice=null;priceEl.textContent='n/a';el('change').textContent='';el('caption').textContent='Live quote unavailable';return;}
   const value=Math.round(q.price*100)/100;
-  if(flash&&lastPrice!==null&&value!==lastPrice){priceEl.classList.add(value>lastPrice?'tick-up':'tick-down');blinkTimer=setTimeout(()=>priceEl.classList.remove('tick-up','tick-down'),450);}
+  if(value!==lastPrice){priceEl.classList.remove('tick-up','tick-down');clearTimeout(blinkTimer);if(flash&&lastPrice!==null){priceEl.classList.add(value>lastPrice?'tick-up':'tick-down');blinkTimer=setTimeout(()=>priceEl.classList.remove('tick-up','tick-down'),450);}}
   priceEl.textContent=money.format(value);lastPrice=value;el('caption').textContent='Checked '+clock.format(q.fetchedAt)+' UTC';
   const change=points.length?(value/points[0][1]-1)*100:null;
   el('change').textContent=change===null?'':(change>=0?'↗ +':'↘ ')+change.toFixed(2)+'%';
@@ -169,8 +169,9 @@ export default {
       model.quote = live.ok ? await live.json() : null;
       if (data.headers.get('X-Price-Cache') === 'stale') model.caption += ' · cached';
       model.historyCaption = model.caption;
-      model.value = model.quote ? new Intl.NumberFormat('en', { style: 'currency', currency: options.cur.toUpperCase(), minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(model.quote.price) : 'n/a';
-      const change = model.quote && history.length ? (model.quote.price / history[0][1] - 1) * 100 : null;
+      const currentValue = model.quote ? Math.round(model.quote.price * 100) / 100 : null;
+      model.value = currentValue === null ? 'n/a' : new Intl.NumberFormat('en', { style: 'currency', currency: options.cur.toUpperCase(), minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(currentValue);
+      const change = currentValue !== null && history.length ? (currentValue / history[0][1] - 1) * 100 : null;
       model.change = change === null ? '' : (change >= 0 ? '↗ +' : '↘ ') + change.toFixed(2) + '%';
       model.caption = model.quote ? 'Checked ' + new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'UTC' }).format(model.quote.fetchedAt) + ' UTC' : 'Live quote unavailable';
       response = new Response(PAGE(nonce, options, model, req.headers.get('Sec-Fetch-Dest') === 'iframe'), { headers: { ...SECURITY, 'Content-Type': 'text/html;charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; script-src 'nonce-" + nonce + "'; style-src 'nonce-" + nonce + "'; connect-src 'self'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors " + ancestors(env.ALLOWED_ANCESTORS) } });

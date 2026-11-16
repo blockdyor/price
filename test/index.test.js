@@ -255,3 +255,21 @@ test('historical range fetch cannot overwrite the current headline; hidden pages
   const before=calls.length;app.document.hidden=true;await app.tick(5000);
   assert.equal(calls.length,before);
 });
+test('a historical refresh does not truncate a running quote flash', async () => {
+  const app=clientPage(await (await request('/')).text());
+  now+=6000;
+  globalThis.fetch=async u=>new URL(u).hostname==='api.kraken.com'?ticker(71000.25):Response.json(upstream());
+  await app.tick(5000);assert.ok(app.nodes.price.classes.has('tick-up'));
+  app.handlers.get('ranges:click')({target:{closest(){return{dataset:{days:'30'}}}},preventDefault(){}});
+  await new Promise(setImmediate);
+  assert.ok(app.nodes.price.classes.has('tick-up'));
+  await app.tick(450);assert.equal(app.nodes.price.classes.size,0);
+});
+test('server and client use identical displayed-cent rounding', async () => {
+  globalThis.fetch=async u=>new URL(u).hostname==='api.kraken.com'?ticker(70000.025):Response.json(upstream());
+  const html=await (await request('/')).text();
+  const initial=html.match(/id="price"[^>]*>([^<]*)/)[1];
+  const app=clientPage(html);
+  assert.equal(app.nodes.price.textContent,initial);
+  assert.equal(app.nodes.price.classes.size,0);
+});
