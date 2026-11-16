@@ -19,7 +19,7 @@ beforeEach(() => {
   } };
   globalThis.fetch = async (url) => {
     calls.push(String(url));
-    if (new URL(url).hostname === 'api.kraken.com') return Response.json({error:[],result:{ticker:{c:['70999.00','1']}}});
+    if (new URL(url).pathname === '/api/v1/prices') return ticker(70999);
     return Response.json(upstream(new URL(url).searchParams.get('currency')));
   };
 });
@@ -128,7 +128,7 @@ test('standalone is chart-only and contains a real server-rendered price and lin
   assert.match(html, /Back to blockdyor.com/);
   assert.match(html, /\$70,999/);
   assert.match(html, /<polyline id="line" points="[\d., -]+"/);
-  assert.ok(Buffer.byteLength(html) <= 14500); // Live quote/flash code adds a small payload to v0.1.0.
+  assert.ok(Buffer.byteLength(html) <= 15000); // Branded page, live endpoint and tab title; compressed size is checked above.
 });
 test('page renders calm n/a server-side when the provider is unavailable', async () => {
   globalThis.fetch = async () => { throw new Error('offline'); };
@@ -147,10 +147,10 @@ test('keyboard inspection announces historical prices in a permanent live region
   assert.match(html, /id="announcement"[^>]*role="status"[^>]*aria-live="polite"/);
   const app = clientPage(html);
   app.handlers.get('chart:keydown')({key:'Home',preventDefault(){}});
-  assert.match(app.nodes.announcement.textContent, /\$70,000/);
+  assert.match(app.nodes.announcement.textContent, /\$70,831/);
   assert.equal(app.nodes.announcement.textContent, app.nodes.tip.textContent);
   app.handlers.get('chart:keydown')({key:'End',preventDefault(){}});
-  assert.match(app.nodes.announcement.textContent, /\$71,000/);
+  assert.match(app.nodes.announcement.textContent, /\$70,999/);
 });
 test('light up-stroke meets non-text contrast without changing the brand token', async () => {
   const html = await (await request('/')).text();
@@ -172,13 +172,13 @@ test('widget is scoped, supports dimensions, lazy frames and theme messages', as
   assert.doesNotThrow(() => new Function(script)); // Generated Worker code only, never untrusted input.
 });
 
-const ticker = value => Response.json({error:[],result:{ticker:{c:[String(value),'1']}}});
-test('current quote whitelists currencies and uses the public latest trade', async () => {
-  for (const [cur,pair] of [['usd','XBTUSD'],['eur','XBTEUR'],['gbp','XBTGBP'],['chf','XBTCHF'],['bad','XBTUSD']]) {
+const ticker = (value, time = Math.floor(now / 1000)) => Response.json({time,USD:value,EUR:value,GBP:value,CHF:value});
+test('current quote whitelists currencies and uses only mempool', async () => {
+  for (const cur of ['usd','eur','gbp','chf','bad']) {
     const r = await request('/api/quote?cur=' + cur); assert.equal(r.status,200);
     const d = await r.json();
-    assert.deepEqual(d,{price:70999,currency:cur==='bad'?'usd':cur,fetchedAt:now});
-    assert.ok(calls.some(u => new URL(u).searchParams.get('pair') === pair));
+    assert.deepEqual(d,{price:70999,currency:cur==='bad'?'usd':cur,fetchedAt:now,time:now});
+    assert.ok(calls.every(u => u === 'https://mempool.space/api/v1/prices'));
     assert.match(r.headers.get('cache-control'), /max-age=0/);
   }
 });
@@ -190,11 +190,11 @@ test('current quote cache expires after five seconds and never disguises a stale
   assert.equal((await (await request('/api/quote')).json()).price,71001);
   now += 6000; globalThis.fetch = async () => new Response('',{status:429});
   const bad = await request('/api/quote'); assert.equal(bad.status,503);
-  assert.deepEqual(await bad.json(),{price:null,currency:'usd',fetchedAt:null});
+  assert.deepEqual(await bad.json(),{price:null,currency:'usd',fetchedAt:null,time:null});
   assert.equal(bad.headers.get('cache-control'),'no-store');
 });
 test('current quote rejects malformed provider responses and survives cache failure', async () => {
-  for (const bad of [{error:['rate limited'],result:{}},{error:[],result:{t:{c:['NaN']}}},{error:[],result:{t:{c:['-1']}}},{error:[],result:{}}]) {
+  for (const bad of [{time:now/1000,USD:'bad'},{time:now/1000,USD:-1},{time:now/1000},{time:'bad',USD:71000},{time:now/1000+60,USD:71000},{time:now/1000-3601,USD:71000}]) {
     entries.clear(); globalThis.fetch=async()=>Response.json(bad);
     assert.equal((await request('/api/quote')).status,503);
   }
@@ -202,33 +202,33 @@ test('current quote rejects malformed provider responses and survives cache fail
   globalThis.caches.default.put=async()=>{throw Error('full')};
   assert.equal((await request('/api/quote')).status,200);
 });
-test('title is lowercase price; headline is the current quote, not the historical endpoint', async () => {
-  globalThis.fetch=async u => new URL(u).hostname==='api.kraken.com'?ticker(71234.56):Response.json(upstream());
+test('title matches the current headline, not the historical endpoint', async () => {
+  globalThis.fetch=async u => new URL(u).pathname==='/api/v1/prices'?ticker(71234.56):Response.json(upstream());
   const html=await (await request('/')).text();
-  assert.match(html,/<title>price<\/title>/);
+  assert.match(html,/<title>\$71,234\.56<\/title>/);
   assert.match(html,/>\$71,234\.56<\/span>/);
-  assert.match(html,/Checked/);
+  assert.match(html,/Updated/);
   assert.match(html,/prefers-reduced-motion/);
   assert.match(html,/tick-up/); assert.match(html,/tick-down/);
 });
 test('quote failure does not substitute the old historical price for a live quote', async () => {
-  globalThis.fetch=async u=>new URL(u).hostname==='api.kraken.com'?new Response('',{status:503}):Response.json(upstream());
+  globalThis.fetch=async u=>new URL(u).pathname==='/api/v1/prices'?new Response('',{status:503}):Response.json(upstream());
   const html=await (await request('/')).text();
   assert.match(html,/id="price"[^>]*>n\/a<\/span>/);
   assert.match(html,/Live quote unavailable/);
   assert.match(html,/<polyline id="line" points="[\d., -]+"/);
 });
 
-function clientPage(html) {
+function clientPage(html, floatSVG = false) {
   const handlers=new Map(),timers=new Map(),nodes={};let next=1;
   for (const id of ['chart','line','dot','tip','announcement','ranges','theme','price','change','caption']) {
     const classes=new Set();
-    nodes[id]={textContent:'',hidden:false,classes,classList:{add(...xs){xs.forEach(x=>classes.add(x));},remove(...xs){xs.forEach(x=>classes.delete(x));}},
-      addEventListener(t,fn){handlers.set(id+':'+t,fn);},setAttribute(){},removeAttribute(){},getBoundingClientRect(){return{width:320,height:80,left:0}}};
+    nodes[id]={style:{},textContent:'',hidden:false,classes,classList:{add(...xs){xs.forEach(x=>classes.add(x));},remove(...xs){xs.forEach(x=>classes.delete(x));}},
+      attrs:{},addEventListener(t,fn){handlers.set(id+':'+t,fn);},setAttribute(k,v){this.attrs[k]=String(v);if(id==='line'&&k==='points')this.points=String(v).trim().split(/\s+/).filter(Boolean).map(p=>{const[x,y]=p.split(',').map(n=>floatSVG?Math.fround(Number(n)):Number(n));return{x,y}});if(id==='chart'&&k==='viewBox'){const[x,y,width,height]=String(v).split(' ').map(Number);this.viewBox.baseVal={x,y,width,height};}},getAttribute(k){return this.attrs[k]??null},removeAttribute(k){delete this.attrs[k];if(id==='line'&&k==='points')this.points=[];},getBoundingClientRect(){return{width:320,height:80,left:0}}};
   }
   nodes.price.textContent=html.match(/id="price"[^>]*>([^<]*)/)[1];
-  nodes.line.points=[{x:0,y:-70000},{x:1,y:-71000}];nodes.chart.viewBox={baseVal:{width:1,height:1120}};
-  const document={hidden:false,documentElement:{dataset:{theme:'light'}},getElementById:id=>nodes[id],querySelectorAll:()=>[],addEventListener(t,fn){handlers.set('document:'+t,fn);}};
+  nodes.line.setAttribute('points',html.match(/id="line" points="([^"]*)/)[1]);nodes.chart.viewBox={baseVal:{width:1,height:1120}};nodes.tip.hidden=true;
+  const document={title:html.match(/<title>([^<]*)/)[1],hidden:false,documentElement:{dataset:{theme:'light'}},getElementById:id=>nodes[id],querySelectorAll:()=>[],addEventListener(t,fn){handlers.set('document:'+t,fn);}};
   const script=[...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].at(-1)[1];
   runInNewContext(script,{document,window:{addEventListener(){}},Intl,Date,AbortController,AbortSignal,
     fetch:path=>request(path),setTimeout(fn,delay){const id=next++;timers.set(id,{fn,delay});return id;},clearTimeout(id){timers.delete(id);}});
@@ -247,18 +247,22 @@ test('whole-price flash follows live movement only; unchanged and initial quotes
   globalThis.fetch=async()=>new Response('',{status:503});now+=6000;await app.tick(5000);
   assert.equal(app.nodes.price.textContent,'n/a');assert.match(app.nodes.caption.textContent,/unavailable/);
 });
-test('historical range fetch cannot overwrite the current headline; hidden pages pause quote polling', async () => {
+test('history cannot overwrite the headline; hidden tabs keep their title updated at a slower rate', async () => {
   const app=clientPage(await (await request('/')).text());
   const headline=app.nodes.price.textContent;
   app.handlers.get('ranges:click')({target:{closest(){return{dataset:{days:'30'}}}},preventDefault(){}});
   await new Promise(setImmediate);assert.equal(app.nodes.price.textContent,headline);
-  const before=calls.length;app.document.hidden=true;await app.tick(5000);
-  assert.equal(calls.length,before);
+  const before=calls.length;app.document.hidden=true;app.handlers.get('document:visibilitychange')();now+=60000;await app.tick(60000);
+  assert.equal(calls.length,before+1);
+  assert.ok([...app.timers.values()].some(t=>t.delay===60000));
+  assert.equal(app.document.title,app.nodes.price.textContent);
+  app.document.hidden=false;app.handlers.get('document:visibilitychange')();await new Promise(setImmediate);
+  assert.ok([...app.timers.values()].some(t=>t.delay===5000));
 });
 test('a historical refresh does not truncate a running quote flash', async () => {
   const app=clientPage(await (await request('/')).text());
   now+=6000;
-  globalThis.fetch=async u=>new URL(u).hostname==='api.kraken.com'?ticker(71000.25):Response.json(upstream());
+  globalThis.fetch=async u=>new URL(u).pathname==='/api/v1/prices'?ticker(71000.25):Response.json(upstream());
   await app.tick(5000);assert.ok(app.nodes.price.classes.has('tick-up'));
   app.handlers.get('ranges:click')({target:{closest(){return{dataset:{days:'30'}}}},preventDefault(){}});
   await new Promise(setImmediate);
@@ -266,10 +270,61 @@ test('a historical refresh does not truncate a running quote flash', async () =>
   await app.tick(450);assert.equal(app.nodes.price.classes.size,0);
 });
 test('server and client use identical displayed-cent rounding', async () => {
-  globalThis.fetch=async u=>new URL(u).hostname==='api.kraken.com'?ticker(70000.025):Response.json(upstream());
+  globalThis.fetch=async u=>new URL(u).pathname==='/api/v1/prices'?ticker(70000.025):Response.json(upstream());
   const html=await (await request('/')).text();
   const initial=html.match(/id="price"[^>]*>([^<]*)/)[1];
   const app=clientPage(html);
   assert.equal(app.nodes.price.textContent,initial);
   assert.equal(app.nodes.price.classes.size,0);
+});
+test('live quote updates the chart endpoint and tab title without adding fake ticks', async () => {
+  const html=await (await request('/')).text(),app=clientPage(html);
+  const count=app.nodes.line.points.length;
+  assert.equal(app.document.title,app.nodes.price.textContent);
+  now+=6000;globalThis.fetch=async()=>ticker(71000.25);await app.tick(5000);
+  assert.equal(app.document.title,'$71,000.25');
+  assert.equal(app.nodes.line.points.at(-1).y,-71000.25);
+  const x=app.nodes.line.points.at(-1).x;
+  const start=Number(html.match(/let days='[^']+',start=(\d+)/)[1]);
+  assert.ok(Math.abs(start+x*3600000-now)<1);
+  assert.equal(app.nodes.line.points.length,count);
+  const published=now;now+=6000;globalThis.fetch=async()=>ticker(71000.25,published/1000);await app.tick(5000);
+  assert.equal(app.nodes.line.points.at(-1).x,x);
+  assert.equal(app.nodes.line.points.length,count);
+  assert.equal(app.nodes.price.classes.size,1); // Previous flash remains until its 450ms timer runs.
+  await app.tick(450);
+
+  app.handlers.get('ranges:click')({target:{closest(){return{dataset:{days:'365'}}}},preventDefault(){}});
+  globalThis.fetch=async()=>Response.json(upstream());await new Promise(setImmediate);
+  assert.equal(app.nodes.line.points.at(-1).y,-71000.25);
+  assert.ok(app.nodes.line.points.length<=300);
+  assert.equal(app.document.title,app.nodes.price.textContent);
+  globalThis.fetch=async()=>new Response('',{status:503});now+=6000;await app.tick(5000);
+  assert.equal(app.document.title,'n/a');assert.equal(app.nodes.price.textContent,'n/a');
+});
+test('favicon matches the fixed blockdyor asset and is served from the Worker', async () => {
+  const html=await (await request('/')).text();assert.match(html,/<link rel="icon" href="\/favicon.png" type="image\/png">/);
+  const bytes=new Uint8Array([137,80,78,71,13,10,26,10]);
+  globalThis.fetch=async u=>{assert.equal(u,'https://blockdyor.com/content/images/size/w256h256/2023/01/favicon.png');return new Response(bytes,{headers:{'Content-Type':'image/png'}})};
+  const r=await request('/favicon.png');assert.equal(r.status,200);assert.match(r.headers.get('content-type'),/image\/png/);assert.match(r.headers.get('cache-control'),/max-age=86400/);assert.deepEqual(new Uint8Array(await r.arrayBuffer()),bytes);
+  globalThis.fetch=async()=>new Response('',{status:503});assert.equal((await request('/favicon.png')).status,404);
+});
+test('the mempool quote cache cannot reuse a v0.2.0 exchange quote', async () => {
+  entries.set('https://price.example/api/quote?cur=usd',Response.json({price:88000,currency:'usd',fetchedAt:now},{headers:{'X-Fetched-At':String(now)}}));
+  const q=await (await request('/api/quote')).json();assert.equal(q.price,70999);assert.equal(q.time,now);
+  assert.ok(calls.includes('https://mempool.space/api/v1/prices'));
+});
+test('float32 SVG hydration drops the known live endpoint instead of keeping it as history', async () => {
+  const seconds=Array.from({length:59},(_,i)=>i+1).find(s=>Math.fround(168-s/3600)<168-s/3600);
+  globalThis.fetch=async u=>new URL(u).pathname==='/api/v1/prices'?ticker(71123.45,now/1000-seconds):Response.json(upstream());
+  const html=await (await request('/')).text(),count=html.match(/id="line" points="([^"]*)/)[1].trim().split(/\s+/).length;
+  const app=clientPage(html,true);assert.equal(app.nodes.line.points.length,count);
+  assert.equal(app.nodes.line.points.filter(p=>Math.abs(p.y+71123.45)<.01).length,1);
+  now+=6000;globalThis.fetch=async()=>ticker(71124.25);await app.tick(5000);
+  assert.equal(app.nodes.line.points.length,count);
+});
+test('an older provider response cannot move the price, title or chart backwards', async () => {
+  const app=clientPage(await (await request('/')).text()),before=app.nodes.line.attrs.points,title=app.document.title;
+  now+=6000;globalThis.fetch=async()=>ticker(69000,now/1000-60);await app.tick(5000);
+  assert.equal(app.document.title,title);assert.equal(app.nodes.price.textContent,title);assert.equal(app.nodes.line.attrs.points,before);assert.equal(app.nodes.price.classes.size,0);
 });

@@ -56,8 +56,8 @@ async function price(url, ctx) {
 
 async function quote(url) {
   const cur = choose(url.searchParams.get('cur'), CURRENCIES, 'usd');
-  const pair = { usd: 'XBTUSD', eur: 'XBTEUR', gbp: 'XBTGBP', chf: 'XBTCHF' }[cur];
-  const key = new Request(url.origin + '/api/quote?cur=' + cur), cache = globalThis.caches?.default;
+
+  const key = new Request(url.origin + '/api/quote?cur=' + cur + '&source=mempool'), cache = globalThis.caches?.default;
   const reply = (body, seconds = 5) => new Response(body, { headers: { ...SECURITY, 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=0, s-maxage=' + seconds } });
   try {
     const saved = await cache?.match(key);
@@ -65,17 +65,21 @@ async function quote(url) {
     if (saved && age >= 0 && age < 5000) return reply(saved.body, Math.max(0, Math.floor((5000 - age) / 1000)));
   } catch { /* Cache failure must not hide a usable quote. */ }
   try {
-    const response = await fetch('https://api.kraken.com/0/public/Ticker?pair=' + pair, { signal: AbortSignal.timeout(4000), cf: { cacheTtl: 0 } });
+    const response = await fetch('https://mempool.space/api/v1/prices', { signal: AbortSignal.timeout(4000), cf: { cacheTtl: 0 } });
     if (!response.ok) throw new Error('Quote unavailable');
-    const data = await response.json(), tickers = Object.values(data.result || {});
-    const value = Number(tickers[0]?.c?.[0]);
-    if (!Array.isArray(data.error) || data.error.length || tickers.length !== 1 || !Number.isFinite(value) || value <= 0) throw new Error('Invalid quote');
-    const fetchedAt = Date.now(), body = JSON.stringify({ price: value, currency: cur, fetchedAt });
+    const data = await response.json(), value = data[cur.toUpperCase()], time = data.time * 1000;
+    if (!Number.isFinite(value) || value <= 0 || !Number.isFinite(data.time) || time <= 0 || time > Date.now() || Date.now() - time > 3600000) throw new Error('Invalid quote');
+    const fetchedAt = Date.now(), body = JSON.stringify({ price: value, currency: cur, fetchedAt, time });
     try { await cache?.put(key, new Response(body, { headers: { 'Cache-Control': 'public, max-age=5', 'X-Fetched-At': String(fetchedAt) } })); } catch { /* Return the good quote even if the cache is full. */ }
     return reply(body);
   } catch {
-    return Response.json({ price: null, currency: cur, fetchedAt: null }, { status: 503, headers: { ...SECURITY, 'Cache-Control': 'no-store' } });
+    return Response.json({ price: null, currency: cur, fetchedAt: null, time: null }, { status: 503, headers: { ...SECURITY, 'Cache-Control': 'no-store' } });
   }
+}
+
+function withQuote(history, quote) {
+  const points = quote ? history.filter(p => p[0] < quote.time).concat([[quote.time, Math.round(quote.price * 100) / 100]]) : history;
+  return points.length <= 300 ? points : Array.from({ length: 300 }, (_, i) => points[Math.round(i * (points.length - 1) / 299)]);
 }
 
 function plot(prices, cur) {
@@ -88,7 +92,7 @@ function plot(prices, cur) {
 }
 
 const PAGE = (nonce, options, model, embedded) => `<!doctype html>
-<html lang="en" data-theme="${options.theme}" data-controls="${options.controls}"${embedded ? ' data-embed="1"' : ''}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>price</title>
+<html lang="en" data-theme="${options.theme}" data-controls="${options.controls}"${embedded ? ' data-embed="1"' : ''}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>${model.value}</title><link rel="icon" href="/favicon.png" type="image/png">
 <script nonce="${nonce}">if(self!==top)document.documentElement.dataset.embed='1';</script>
 <style nonce="${nonce}">
 :root{--bg:#fff;--fg:#000;--mut:#5B5F66;--bd:rgb(0 0 0/.08);--up:#10b981;--dn:#ef4444;--line-up:#07815a;color-scheme:light}
@@ -117,32 +121,38 @@ main{width:min(420px,calc(100% - 40px));margin:clamp(32px,12vh,100px) auto}heade
 <script nonce="${nonce}">
 (()=>{
 const root=document.documentElement,el=id=>document.getElementById(id),chart=el('chart'),line=el('line'),dot=el('dot'),tip=el('tip'),cur='${options.cur}';let days='${options.days}',start=${model.start};
-const money=new Intl.NumberFormat('en',{style:'currency',currency:cur.toUpperCase(),minimumFractionDigits:2,maximumFractionDigits:2}),time=new Intl.DateTimeFormat('en',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'UTC'}),clock=new Intl.DateTimeFormat('en',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false,timeZone:'UTC'});
-let points=Array.from(line.points,p=>[start+p.x*3600000,-p.y]),index=Math.max(0,points.length-1),controller,timer,quoteTimer,blinkTimer,quoteBusy=false,lastPrice=null,currentQuote=${JSON.stringify(model.quote)};
+const money=new Intl.NumberFormat('en',{style:'currency',currency:cur.toUpperCase(),minimumFractionDigits:2,maximumFractionDigits:2}),time=new Intl.DateTimeFormat('en',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'UTC'}),clock=new Intl.DateTimeFormat('en',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false,timeZone:'UTC'});
+const withQuote=${withQuote.toString()};
+let points=Array.from(line.points,p=>[Math.round(start+p.x*3600000),-p.y]),index=Math.max(0,points.length-1),controller,timer,quoteTimer,blinkTimer,quoteBusy=false,lastPrice=null,currentQuote=${JSON.stringify(model.quote)},history=currentQuote?points.slice(0,-1):points;
 const priceEl=el('price'),hide=()=>{dot.setAttribute('visibility','hidden');tip.hidden=true};
+function draw(){
+  points=withQuote(history,currentQuote);
+  if(points.length<2){line.removeAttribute('points');chart.setAttribute('aria-label','Bitcoin price history unavailable');hide();return;}
+  start=points[0][0];const values=points.map(p=>p[1]),lo=Math.min(...values),hi=Math.max(...values),pad=(hi-lo)*.06||1,last=points.at(-1),change=(last[1]/points[0][1]-1)*100;
+  chart.setAttribute('viewBox',[0,-hi-pad,(last[0]-start)/3600000,hi-lo+pad*2].join(' '));line.setAttribute('points',points.map(p=>(p[0]-start)/3600000+','+-p[1]).join(' '));chart.style.color=change>=0?'var(--line-up)':'var(--dn)';chart.setAttribute('aria-label','Bitcoin price, '+days+' days, '+money.format(last[1])+', '+(change>=0?'up ':'down ')+Math.abs(change).toFixed(2)+' percent');
+  index=Math.min(index,points.length-1);if(!tip.hidden)inspect(index);
+}
 function showQuote(q,flash=false){
-  currentQuote=q;
-  if(!q){priceEl.classList.remove('tick-up','tick-down');clearTimeout(blinkTimer);lastPrice=null;priceEl.textContent='n/a';el('change').textContent='';el('caption').textContent='Live quote unavailable';return;}
+  currentQuote=q;draw();
+  if(!q){priceEl.classList.remove('tick-up','tick-down');clearTimeout(blinkTimer);lastPrice=null;document.title=priceEl.textContent='n/a';el('change').textContent='';el('caption').textContent='Live quote unavailable';return;}
   const value=Math.round(q.price*100)/100;
   if(value!==lastPrice){priceEl.classList.remove('tick-up','tick-down');clearTimeout(blinkTimer);if(flash&&lastPrice!==null){priceEl.classList.add(value>lastPrice?'tick-up':'tick-down');blinkTimer=setTimeout(()=>priceEl.classList.remove('tick-up','tick-down'),450);}}
-  priceEl.textContent=money.format(value);lastPrice=value;el('caption').textContent='Checked '+clock.format(q.fetchedAt)+' UTC';
+  document.title=priceEl.textContent=money.format(value);lastPrice=value;el('caption').textContent='Updated '+clock.format(q.time)+' UTC';
   const change=points.length?(value/points[0][1]-1)*100:null;
   el('change').textContent=change===null?'':(change>=0?'↗ +':'↘ ')+change.toFixed(2)+'%';
 }
-function scheduleQuote(){clearTimeout(quoteTimer);quoteTimer=setTimeout(()=>{if(!document.hidden)loadQuote()},5000);}
-async function loadQuote(){if(quoteBusy)return;quoteBusy=true;try{const r=await fetch('/api/quote?cur='+cur,{cache:'no-store',signal:AbortSignal.timeout(4500)});if(!r.ok)throw Error();const q=await r.json();if(!Number.isFinite(q.price)||q.price<=0||!Number.isFinite(q.fetchedAt)||q.currency!==cur)throw Error();showQuote(q,true);}catch{showQuote(null);}finally{quoteBusy=false;scheduleQuote();}}
+function scheduleQuote(){clearTimeout(quoteTimer);quoteTimer=setTimeout(loadQuote,document.hidden?60000:5000);}
+async function loadQuote(){if(quoteBusy)return;quoteBusy=true;try{const r=await fetch('/api/quote?cur='+cur,{cache:'no-store',signal:AbortSignal.timeout(4500)});if(!r.ok)throw Error();const q=await r.json();if(!Number.isFinite(q.price)||q.price<=0||!Number.isFinite(q.fetchedAt)||!Number.isFinite(q.time)||q.time<=0||q.time>Date.now()||Date.now()-q.time>3600000||q.currency!==cur)throw Error();if(!currentQuote||q.time>=currentQuote.time)showQuote(q,true);}catch{showQuote(null);}finally{quoteBusy=false;scheduleQuote();}}
 function inspect(i,announce=false){if(!points.length)return;index=Math.max(0,Math.min(points.length-1,i));const p=points[index],box=chart.viewBox.baseVal,r=chart.getBoundingClientRect();dot.setAttribute('cx',(p[0]-start)/3600000);dot.setAttribute('cy',-p[1]);dot.setAttribute('rx',box.width/Math.max(1,r.width)*3);dot.setAttribute('ry',box.height/Math.max(1,r.height)*3);dot.setAttribute('visibility','visible');tip.textContent=money.format(p[1])+' · '+time.format(p[0])+' UTC';tip.hidden=false;if(announce)el('announcement').textContent=tip.textContent;}
 chart.addEventListener('pointermove',e=>{if(!points.length)return;const r=chart.getBoundingClientRect(),t=start+Math.max(0,Math.min(1,(e.clientX-r.left)/r.width))*(points.at(-1)[0]-start);let best=0;points.forEach((p,i)=>{if(Math.abs(p[0]-t)<Math.abs(points[best][0]-t))best=i});inspect(best)});
 chart.addEventListener('pointerleave',hide);chart.addEventListener('blur',hide);chart.addEventListener('keydown',e=>{if(['ArrowLeft','ArrowRight','Home','End','Escape'].includes(e.key)){e.preventDefault();if(e.key==='Escape')hide();else inspect(e.key==='Home'?0:e.key==='End'?points.length-1:index+(e.key==='ArrowRight'?1:-1),true);}});
 function schedule(){clearTimeout(timer);timer=setTimeout(()=>{if(!document.hidden)load()},days==='1'?60000:300000);}
 async function load(){controller?.abort();controller=new AbortController();const active=controller;hide();
-try{const r=await fetch('/api/price?days='+days+'&cur='+cur,{signal:AbortSignal.any([active.signal,AbortSignal.timeout(10000)])});if(!r.ok)throw Error();const d=await r.json();if(active!==controller)return;if(!Array.isArray(d.prices)||d.prices.length<2)throw Error();points=d.prices;start=points[0][0];
-const values=points.map(p=>p[1]),lo=Math.min(...values),hi=Math.max(...values),pad=(hi-lo)*.06||1,last=points.at(-1),change=(last[1]/points[0][1]-1)*100,up=change>=0;
-chart.setAttribute('viewBox',[0,-hi-pad,(last[0]-start)/3600000,hi-lo+pad*2].join(' '));line.setAttribute('points',points.map(p=>(p[0]-start)/3600000+','+-p[1]).join(' '));chart.style.color=up?'var(--line-up)':'var(--dn)';chart.setAttribute('aria-label','Bitcoin price history, '+days+' days, '+money.format(last[1])+', '+(up?'up ':'down ')+Math.abs(change).toFixed(2)+' percent');index=points.length-1;
-}catch(e){if(active!==controller)return;points=[];line.removeAttribute('points');chart.setAttribute('aria-label','Bitcoin price history unavailable');}
+try{const r=await fetch('/api/price?days='+days+'&cur='+cur,{signal:AbortSignal.any([active.signal,AbortSignal.timeout(10000)])});if(!r.ok)throw Error();const d=await r.json();if(active!==controller)return;if(!Array.isArray(d.prices)||d.prices.length<2)throw Error();history=d.prices;
+}catch(e){if(active!==controller)return;history=[];}
 if(active===controller){showQuote(currentQuote);schedule();}}
 el('ranges').addEventListener('click',e=>{const a=e.target.closest('[data-days]');if(!a)return;e.preventDefault();days=a.dataset.days;document.querySelectorAll('[data-days]').forEach(b=>b.setAttribute('aria-current',String(b.dataset.days===days)));load();});
-document.addEventListener('visibilitychange',()=>{if(!document.hidden){load();loadQuote()}});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){load();loadQuote()}else scheduleQuote()});
 el('theme').addEventListener('click',()=>{root.dataset.theme=({auto:'dark',dark:'light',light:'auto'})[root.dataset.theme];el('theme').setAttribute('aria-label','Color theme: '+root.dataset.theme+'. Change theme');});
 window.addEventListener('message',e=>{if(e.source===parent&&self!==top&&e.data?.type==='btc-theme'&&['light','dark','auto'].includes(e.data.theme))root.dataset.theme=e.data.theme;});
 showQuote(currentQuote);schedule();scheduleQuote();
@@ -160,21 +170,28 @@ export default {
     let response;
     if (url.pathname === '/api/price') response = await price(url, ctx);
     else if (url.pathname === '/api/quote') response = await quote(url);
+    else if (url.pathname === '/favicon.png') {
+      try {
+        const icon = await fetch('https://blockdyor.com/content/images/size/w256h256/2023/01/favicon.png', { signal: AbortSignal.timeout(4000), cf: { cacheEverything: true, cacheTtl: 86400 } });
+        if (!icon.ok || !icon.headers.get('Content-Type')?.startsWith('image/png')) throw new Error('Icon unavailable');
+        response = new Response(icon.body, { headers: { ...SECURITY, 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400' } });
+      } catch { response = new Response(null, { status: 404, headers: { ...SECURITY, 'Cache-Control': 'no-store' } }); }
+    }
     else if (url.pathname === '/widget.js') response = new Response(widget(url.origin), { headers: { ...SECURITY, 'Content-Type': 'application/javascript;charset=utf-8', 'Cache-Control': 'public, max-age=3600' } });
     else if (url.pathname === '/') {
       const nonce = crypto.randomUUID().replaceAll('-', '');
       const options = { days: choose(url.searchParams.get('days'), DAYS, '7'), cur: choose(url.searchParams.get('cur'), CURRENCIES, 'usd'), theme: choose(url.searchParams.get('theme'), ['light', 'dark', 'auto'], 'auto'), controls: url.searchParams.get('controls') === '1' ? '1' : '0' };
       const [data, live] = await Promise.all([price(url, ctx), quote(url)]);
-      const history = (await data.json()).prices, model = plot(history, options.cur);
-      model.quote = live.ok ? await live.json() : null;
+      const history = (await data.json()).prices, current = live.ok ? await live.json() : null, model = plot(withQuote(history, current), options.cur);
+      model.quote = current;
       if (data.headers.get('X-Price-Cache') === 'stale') model.caption += ' · cached';
       model.historyCaption = model.caption;
       const currentValue = model.quote ? Math.round(model.quote.price * 100) / 100 : null;
       model.value = currentValue === null ? 'n/a' : new Intl.NumberFormat('en', { style: 'currency', currency: options.cur.toUpperCase(), minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(currentValue);
       const change = currentValue !== null && history.length ? (currentValue / history[0][1] - 1) * 100 : null;
       model.change = change === null ? '' : (change >= 0 ? '↗ +' : '↘ ') + change.toFixed(2) + '%';
-      model.caption = model.quote ? 'Checked ' + new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'UTC' }).format(model.quote.fetchedAt) + ' UTC' : 'Live quote unavailable';
-      response = new Response(PAGE(nonce, options, model, req.headers.get('Sec-Fetch-Dest') === 'iframe'), { headers: { ...SECURITY, 'Content-Type': 'text/html;charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; script-src 'nonce-" + nonce + "'; style-src 'nonce-" + nonce + "'; connect-src 'self'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors " + ancestors(env.ALLOWED_ANCESTORS) } });
+      model.caption = model.quote ? 'Updated ' + new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'UTC' }).format(model.quote.time) + ' UTC' : 'Live quote unavailable';
+      response = new Response(PAGE(nonce, options, model, req.headers.get('Sec-Fetch-Dest') === 'iframe'), { headers: { ...SECURITY, 'Content-Type': 'text/html;charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; script-src 'nonce-" + nonce + "'; style-src 'nonce-" + nonce + "'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors " + ancestors(env.ALLOWED_ANCESTORS) } });
     } else response = new Response('Not found', { status: 404, headers: SECURITY });
     return req.method === 'HEAD' ? new Response(null, { status: response.status, headers: response.headers }) : response;
   }
