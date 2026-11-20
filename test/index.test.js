@@ -451,6 +451,15 @@ test('future-dated history cache entries cannot masquerade as fresh data', async
   headers.set('X-Fetched-At',String(now+5000));entries.set(key,new Response(await saved.text(),{headers}));
   globalThis.fetch=async()=>{throw Error('unavailable')};assert.equal((await request()).status,503);
 });
+test('preferences button embeds the Lucide settings-2 geometry and its ISC notice', async () => {
+  const html=await (await request('/')).text();
+  const button=html.match(/<button id="settings"[\s\S]*?<\/button>/)[0];
+  assert.match(button,/data-icon="lucide-settings-2"/);
+  assert.match(button,/<path d="M14 17H5"\s*\/>/);assert.match(button,/<path d="M19 7h-9"\s*\/>/);
+  assert.match(button,/<circle cx="17" cy="17" r="3"\s*\/>/);assert.match(button,/<circle cx="7" cy="7" r="3"\s*\/>/);
+  assert.match(button,/stroke-linecap="round"/);assert.match(button,/aria-hidden="true"/);assert.match(button,/focusable="false"/);
+  assert.match(html,/Copyright \(c\) 2026 Lucide Icons and Contributors/);assert.match(html,/THE SOFTWARE IS PROVIDED/);
+});
 test('Git builds target price and preserve dashboard-managed variables and routes', () => {
   const config=readFileSync(new URL('../wrangler.toml',import.meta.url),'utf8');
   assert.match(config,/^name\s*=\s*"price"\s*$/m);

@@ -136,6 +136,6 @@ The requested settings, status and indicator support increase the pasteable sour
 
 ## Branding and license
 
-The inline logo is blockdyor's original 852-byte WebP from `https://blockdyor.com/content/images/size/w320/2026/01/logo_test1.webp`. Colors and system font stack follow blockdyor's Attegi theme. Blog navigation, member controls and social links are deliberately omitted: this is a chart, not a Ghost site.
+The inline logo is blockdyor's original 852-byte WebP from `https://blockdyor.com/content/images/size/w320/2026/01/logo_test1.webp`. Colors and system font stack follow blockdyor's Attegi theme. The preferences icon is Lucide’s `settings-2` ([pinned SVG](https://github.com/lucide-icons/lucide/blob/c1a02a04d4f3f7049d44567d62b8b06cff0b9103/icons/settings-2.svg)), used under ISC; its full applicable notice is retained in the Worker source and served HTML. Blog navigation, member controls and social links are deliberately omitted: this is a chart, not a Ghost site.
 
 [AGPL-3.0-only](LICENSE). The standalone page links to the source repository. If you modify and serve it, keep an appropriate source offer for the version you serve. blockdyor branding is not a grant of trademark rights.
