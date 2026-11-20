@@ -114,8 +114,8 @@ test('page is nonce-protected, iframe-friendly, small and ignores injected param
   assert.equal(r.headers.get('x-frame-options'), null);
   assert.equal(r.headers.get('x-content-type-options'), 'nosniff');
   assert.equal(r.headers.get('referrer-policy'), 'no-referrer');
-  // Full standalone branding fits the brief's larger allowance; compressed HTML stays below 12 KB.
-  assert.ok(Buffer.byteLength(html) <= 19000);
+  // Requested settings/status expand raw markup; moving-average data is fetched separately.
+  assert.ok(Buffer.byteLength(html) <= 32000);
   assert.ok(gzipSync(html).length <= 12000);
   assert.ok(!html.includes('"bad') && !html.includes('days=<script>'));
   assert.match(html, /role="img"/);
@@ -129,7 +129,7 @@ test('standalone is chart-only and contains a real server-rendered price and lin
   assert.match(html, /Back to blockdyor.com/);
   assert.match(html, /\$70,999/);
   assert.match(html, /<polyline id="line" points="[\d., -]+"/);
-  assert.ok(Buffer.byteLength(html) <= 15800); // Includes branded embeds and cache metadata; compressed size is checked above.
+  assert.ok(Buffer.byteLength(html) <= 32000); // Attegi controls included; compressed size is checked above.
 });
 test('page renders calm n/a server-side when the provider is unavailable', async () => {
   globalThis.fetch = async () => { throw new Error('offline'); };
@@ -221,19 +221,19 @@ test('quote failure does not substitute the old historical price for a live quot
 });
 
 function clientPage(html, floatSVG = false) {
-  const handlers=new Map(),timers=new Map(),nodes={};let next=1;
-  for (const id of ['chart','line','dot','tip','announcement','ranges','theme','price','change','caption']) {
+  const handlers=new Map(),timers=new Map(),nodes={},requests=[];let next=1;
+  for (const id of ['chart','line','dot','tip','announcement','ranges','theme','theme-label','price','change','caption','settings','settings-panel','settings-close','status','status-text','ma-day','ma-week','ma-day-note','ma-week-note','ma-day-line','ma-week-line','ma-legend','ma-day-legend','ma-week-legend']) {
     const classes=new Set();
-    nodes[id]={style:{},textContent:'',hidden:false,classes,classList:{add(...xs){xs.forEach(x=>classes.add(x));},remove(...xs){xs.forEach(x=>classes.delete(x));}},
+    nodes[id]={style:{},textContent:'',hidden:id==='settings-panel',disabled:false,focus(){document.activeElement=this},contains(target){return target===this},classes,classList:{add(...xs){xs.forEach(x=>classes.add(x));},remove(...xs){xs.forEach(x=>classes.delete(x));}},
       attrs:{},addEventListener(t,fn){handlers.set(id+':'+t,fn);},setAttribute(k,v){this.attrs[k]=String(v);if(id==='line'&&k==='points')this.points=String(v).trim().split(/\s+/).filter(Boolean).map(p=>{const[x,y]=p.split(',').map(n=>floatSVG?Math.fround(Number(n)):Number(n));return{x,y}});if(id==='chart'&&k==='viewBox'){const[x,y,width,height]=String(v).split(' ').map(Number);this.viewBox.baseVal={x,y,width,height};}},getAttribute(k){return this.attrs[k]??null},removeAttribute(k){delete this.attrs[k];if(id==='line'&&k==='points')this.points=[];},getBoundingClientRect(){return{width:320,height:80,left:0}}};
   }
   nodes.price.textContent=html.match(/id="price"[^>]*>([^<]*)/)[1];
   nodes.line.setAttribute('points',html.match(/id="line" points="([^"]*)/)[1]);nodes.chart.viewBox={baseVal:{width:1,height:1120}};nodes.tip.hidden=true;
   const document={title:html.match(/<title>([^<]*)/)[1],hidden:false,documentElement:{dataset:{theme:'light'}},getElementById:id=>nodes[id],querySelectorAll:()=>[],addEventListener(t,fn){handlers.set('document:'+t,fn);}};
   const script=[...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].at(-1)[1];
-  runInNewContext(script,{document,window:{addEventListener(){}},Intl,Date,AbortController,AbortSignal,
-    fetch:path=>request(path),setTimeout(fn,delay){const id=next++;timers.set(id,{fn,delay});return id;},clearTimeout(id){timers.delete(id);}});
-  return{nodes,handlers,document,timers,async tick(delay){const t=[...timers].find(([,v])=>v.delay===delay);assert.ok(t,'timer '+delay);timers.delete(t[0]);await t[1].fn();await new Promise(setImmediate);}};
+  runInNewContext(script,{document,navigator:{onLine:true},window:{addEventListener(t,fn){handlers.set('window:'+t,fn)}},Intl,Date,AbortController,AbortSignal,
+    fetch:path=>{requests.push(path);return request(path)},setTimeout(fn,delay){const id=next++;timers.set(id,{fn,delay});return id;},clearTimeout(id){timers.delete(id);}});
+  return{nodes,handlers,document,timers,requests,async tick(delay){const t=[...timers].find(([,v])=>v.delay===delay);assert.ok(t,'timer '+delay);timers.delete(t[0]);await t[1].fn();await new Promise(setImmediate);}};
 }
 test('whole-price flash follows live movement only; unchanged and initial quotes do not flash', async () => {
   const app=clientPage(await (await request('/')).text());
@@ -377,6 +377,79 @@ test('caption includes the UTC calendar date and never replaces publication time
   assert.equal(app.nodes.caption.textContent,'Cached · 2026-11-15 23:59 UTC');
   now+=6000;await app.tick(5000);
   assert.equal(app.nodes.caption.textContent,'2026-11-15 23:59 UTC');
+});
+test('Attegi settings have accessible tiles, connection status and a validated 5y range', async () => {
+  const html=await (await request('/?days=1825')).text();
+  assert.match(html,/--accent:#f7931a/i);assert.match(html,/id="settings-panel"[^>]*role="dialog"/);
+  assert.match(html,/id="settings"[^>]*aria-controls="settings-panel"/);
+  assert.match(html,/data-days="1825" aria-current="true"/);
+  assert.match(html,/200D SMA/);assert.match(html,/200W SMA/);assert.match(html,/id="status-text">Online/);
+  const app=clientPage(html);assert.equal(app.nodes['ma-day'].disabled,false);
+  app.handlers.get('settings:click')();assert.equal(app.nodes['settings-panel'].hidden,false);assert.equal(app.nodes.settings.attrs['aria-expanded'],'true');
+  app.handlers.get('document:keydown')({key:'Escape'});assert.equal(app.nodes['settings-panel'].hidden,true);assert.equal(app.document.activeElement,app.nodes.settings);
+});
+test('closing settings by outside click does not steal focus from the clicked control', async () => {
+  const app=clientPage(await (await request('/')).text());app.handlers.get('settings:click')();
+  const outside={control:'range'};app.document.activeElement=outside;
+  app.handlers.get('document:click')({target:outside});
+  assert.equal(app.nodes['settings-panel'].hidden,true);assert.equal(app.document.activeElement,outside);
+});
+test('feed status distinguishes success, usable history and network offline', async () => {
+  const app=clientPage(await (await request('/')).text());assert.equal(app.nodes['status-text'].textContent,'Online');
+  now+=6000;globalThis.fetch=async()=>new Response('',{status:503});await app.tick(5000);
+  assert.equal(app.nodes['status-text'].textContent,'Stale');
+  app.handlers.get('window:offline')();assert.equal(app.nodes['status-text'].textContent,'Offline');
+  now+=6000;globalThis.fetch=async()=>ticker(71001);await app.tick(5000);assert.equal(app.nodes['status-text'].textContent,'Online');
+});
+test('unchanged online state does not repeatedly rewrite its live-region text', async () => {
+  const app=clientPage(await (await request('/')).text());let writes=0;const value=app.nodes['status-text'].textContent;
+  Object.defineProperty(app.nodes['status-text'],'textContent',{get:()=>value,set(){writes++}});
+  now+=6000;await app.tick(5000);assert.equal(writes,0);
+});
+test('indicator toggles fetch real averages lazily and hide them on short ranges', async () => {
+  globalThis.fetch=async u=>new URL(u).pathname==='/api/v1/prices'?ticker(70999):Response.json(upstream('USD',50000));
+  const app=clientPage(await (await request('/?days=365')).text());
+  assert.equal(app.nodes['ma-day'].attrs['aria-pressed'],'false');
+  assert.equal(app.requests.filter(x=>x.startsWith('/api/averages')).length,0);
+  await app.handlers.get('ma-day:click')();
+  assert.equal(app.nodes['ma-day'].attrs['aria-pressed'],'true');
+  assert.ok(app.nodes['ma-day-line'].attrs.points?.length>10);assert.equal(app.nodes['ma-legend'].hidden,false);
+  assert.equal(app.requests.filter(x=>x.startsWith('/api/averages')).length,1);
+  await app.handlers.get('ma-week:click')();assert.ok(app.nodes['ma-week-line'].attrs.points?.length>10);
+  assert.equal(app.requests.filter(x=>x.startsWith('/api/averages')).length,1);
+  app.handlers.get('ranges:click')({target:{closest(){return{dataset:{days:'7'}}}},preventDefault(){}});
+  await new Promise(setImmediate);
+  assert.equal(app.nodes['ma-day'].disabled,true);assert.equal(app.nodes['ma-legend'].hidden,true);
+});
+test('cached averages remain usable across midnight and mark only displayed cached curves', async () => {
+  now=Math.floor(now/86400000)*86400000;
+  globalThis.fetch=async u=>new URL(u).pathname==='/api/v1/prices'?ticker(70999):Response.json(upstream('USD',50000));
+  await request('/api/averages?days=365&cur=usd');
+  const app=clientPage(await (await request('/?days=365')).text());
+  assert.doesNotMatch(app.nodes.caption.textContent,/Cached/);now+=60000;
+  await app.handlers.get('ma-day:click')();assert.ok(app.nodes['ma-day-line'].attrs.points?.length>10);
+  assert.match(app.nodes.caption.textContent,/^Cached · /);
+  await app.handlers.get('ma-day:click')();assert.doesNotMatch(app.nodes.caption.textContent,/Cached/);
+});
+test('late indicator response cannot repaint a newly selected short range', async () => {
+  const rows=upstream('USD',50000);globalThis.fetch=async u=>new URL(u).pathname==='/api/v1/prices'?ticker(70999):Response.json(rows);
+  const app=clientPage(await (await request('/?days=365')).text());let release,n=0;
+  globalThis.fetch=async()=>++n===1?await new Promise(resolve=>{release=resolve}):Response.json(rows);
+  const pending=app.handlers.get('ma-day:click')();await new Promise(setImmediate);assert.equal(typeof release,'function');
+  app.handlers.get('ranges:click')({target:{closest(){return{dataset:{days:'7'}}}},preventDefault(){}});
+  release(Response.json(rows));await pending;await new Promise(setImmediate);
+  assert.equal(app.nodes['ma-legend'].hidden,true);assert.equal(app.nodes['ma-day-line'].attrs.points,undefined);
+  assert.equal(app.nodes['ma-day'].disabled,true);
+});
+test('history fallback rechecks its 24-hour age after a failed awaited refresh', async () => {
+  await request();now+=86400000-1000;
+  globalThis.fetch=async()=>{now+=2000;throw Error('timeout')};
+  const r=await request();assert.equal(r.status,503);assert.deepEqual(await r.json(),{prices:[]});
+});
+test('future-dated history cache entries cannot masquerade as fresh data', async () => {
+  await request();const [key,saved]=[...entries][0],headers=new Headers(saved.headers);
+  headers.set('X-Fetched-At',String(now+5000));entries.set(key,new Response(await saved.text(),{headers}));
+  globalThis.fetch=async()=>{throw Error('unavailable')};assert.equal((await request()).status,503);
 });
 test('Git builds target price and preserve dashboard-managed variables and routes', () => {
   const config=readFileSync(new URL('../wrangler.toml',import.meta.url),'utf8');
