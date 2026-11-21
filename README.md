@@ -111,6 +111,21 @@ The provider is accessed only by the Worker. Public/keyless API access remains s
 
 The blockdyor favicon is served through `/favicon.png`, copied byte-for-byte from the fixed site icon URL and cached for a day. The browser still requests only the Worker origin; favicon failure does not break the page.
 
+## Daily sharing thumbnails
+
+Shared links use the selected **Price first** dark artwork: blockdyor logo, a large price, signed range change, real mini chart and full source UTC timestamp. Original server-rendered HTML includes Open Graph title/description/canonical URL, absolute image URL, MIME/dimensions/alt text and an X `summary_large_image` card. Whitelisted currency/range parameters are preserved; theme, embed controls and unknown/tracking parameters do not enter canonical URLs.
+
+- Each UTC calendar day gets a new image URL: `/social/YYYY-MM-DD/usd/7/og.png` (1200×630) and `x.png` (1200×600). Substitute supported currency/range values. Images use the latest available historical sample **strictly before that day's00:00UTC**, from the latest completed UTC day. They are daily historical snapshots—not the intraday headline quote or guaranteed exchange OHLC closing prices. The actual sample date/time remains visible and is also exposed as `X-Snapshot-Time`; `X-Snapshot-Price` records the displayed price.
+- Generation is lazy on the first image request, then cached for a day. The date in the original head changes automatically at UTC midnight: no scheduled job, deployment, external rendering service or binding is needed. Dated historical URLs can be regenerated from mempool history. Cache entries are best-effort and evictable; PNG headers, dimensions and chunk checksums are checked before reuse.
+- Both PNG sizes stay below a conservative600KB file budget drawn from WhatsApp Cloud API guidance (not a guarantee about organic-share previews), with essential content inside the centered630px crop-safe band. A missing/invalid source or insufficient/old observations produces a labeled `n/a` image without a fabricated line/time, returned with `no-store`. No-data responses are never cached for a day. Invalid/future calendar dates and unsupported path values return400 without contacting the provider.
+- Social apps decide when to crawl metadata and retain images. Dated URLs help once they re-crawl, but do **not** force existing posts/chats to update. This is not a promise of daily refresh on every platform. Live platform-post rendering needs its own check; a valid image response alone does not establish a Facebook/X/WhatsApp post preview.
+
+Only `src/index.js` deploys. Its renderer uses embedded antialiased raster masks and a small indexed PNG encoder with standard `CompressionStream('deflate')`; there is no browser Canvas, library, WASM, font download or third-party request at runtime. Local CPU timings do not certify Cloudflare plan limits; no plan upgrade or paid resource is configured.
+
+Developer rebuild sources are under `tools/`: open `social-assets.html` locally with DejaVu Sans regular/bold installed to generate masks, save the downloaded JSON as `tools/social-assets.json`, then run `python3 tools/build-social-renderer.py`. Edit `tools/social-renderer.js` for rendering logic; `python3 tools/build-social-renderer.py --check` verifies it matches the embedded Worker. Font copyright/permission notices are retained in both the Worker and `tools/social-font-notice.txt`. These are development inputs, not extra deployable runtime files.
+
+Primary guidance: [Meta link images](https://developers.facebook.com/documentation/sharing/webmasters/images/), [WhatsApp link previews](https://developers.facebook.com/documentation/business-messaging/whatsapp/link-previews), [Workers standard compression streams](https://developers.cloudflare.com/workers/runtime-apis/web-standards/#compression-streams). X's former large-card documentation was unavailable during preparation; the dedicated2:1 export and markup still require actual platform-crawler confirmation.
+
 ## Privacy and security
 
 No cookies, local storage, analytics, third-party scripts, external fonts or third-party browser requests. The logo is an inline data URI. The browser talks only to the Worker; the provider sees the Worker's request, not a direct request from the visitor. Normal Cloudflare/provider operational logging may still apply.
@@ -128,11 +143,11 @@ npm test
 npm run dev
 ```
 
-`npm run dev` serves `http://localhost:8787`. Restart it after editing the Worker. This plain Node server has no Cloudflare Cache API; caching is exercised by the tests with an in-memory mock. The test command explicitly runs both `test/index.test.js` and `test/averages.test.js`. Tests invoke `worker.fetch(new Request(...), env)` directly and mock external fetch/cache boundaries; client tests execute the generated script with minimal DOM/timer primitives. No Cloudflare runtime or account is needed.
+`npm run dev` serves `http://localhost:8787`. Restart it after editing the Worker. This plain Node server has no Cloudflare Cache API; caching is exercised by the tests with an in-memory mock. The test command explicitly runs `test/index.test.js`, `test/averages.test.js`, `test/social.test.js` and `test/social-render.test.js`. Tests invoke `worker.fetch(new Request(...), env)` directly and mock external fetch/cache boundaries; client tests execute the generated script with minimal DOM/timer primitives. No Cloudflare runtime or account is needed.
 
 If Hermes runs remotely, that server's localhost is not your desktop's localhost. Hermes' side-pane file preview disables scripts; use an inline `::preview` for an interactive captured-data preview, not as proof of a live Worker deployment.
 
-The requested settings, status and indicator support increase the pasteable source to about 40 KB (previously about 24 KB). Raw HTML is budgeted at 32 KB; the existing 12 KB gzip regression remains. Derived series are fetched separately rather than embedded in initial HTML. Real-provider payload sizes vary. Cloudflare production CPU metrics are not available to this project’s local tests.
+The requested settings, status and indicator support increase the pasteable source to about 90 KB including the offline social-image masks (previously about 41 KB). Raw HTML is budgeted at 32 KB; the existing 12 KB gzip regression remains. Derived series are fetched separately rather than embedded in initial HTML. Real-provider payload sizes vary. Cloudflare production CPU metrics are not available to this project’s local tests.
 
 ## Branding and license
 

@@ -1,0 +1,33 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Price social glyph asset builder</title><style>body{font:16px system-ui;margin:24px;max-width:900px}textarea{display:block;width:100%;height:420px;margin-top:20px}button,a{margin-right:12px}</style><h1>Price social image assets</h1><p>Developer-only, entirely local. Install DejaVu Sans regular and bold, then Generate. The Worker needs neither this page nor a font/library at runtime.</p><img class="brand" hidden src="data:image/webp;base64,UklGRkwDAABXRUJQVlA4WAoAAAAQAAAAPwEASgAAQUxQSM4CAAABkIVt29lI/9q2bdu2jSPbtm3bdsaeaTuZdFbDnq1t29v5F2/y/eV4NiIm4BeHU5jF0z/gcA2zv64cKsyWQzn0ZI74J5psBffQKjt0Hsk2JSO3ZFl+WM9d+3XOyfvuBJy1ByFxPsp/IE2K84mSxC6zgnUSsbygCZLWcyWtpZWEcwiaIxFfCOohwcNZCYUl3IByQCLm1bJUgutQ+mOS9vMqog2pLBfGifUFHeJaf9bKmMY6BnOcT5A7F0uawuGLXITyHPekPOTEYlqCOLyMMr7i2n86Hv7k/sA4Hs6HJUny0ER8Z7mMtbC7idi3FiyG0larBXeYiFNrwfKCUlWoBSeZcG5Cuhq14BET8aOgydaRvRZWTMQ2tWBBxth+E/SoBetfNsFHlImM6Ga5qhx3ZMRbHO5GuV9yOJMR3TkMFZQmikNvJrbgNw6HM2KIoEnW0Z7j6kx72k8cLmQau3L4oyyDUyiTKZ6Wq6zSgXIT7aTMoLghRVQk8hNUQJRiS20Fpf+IFmjpQpmelJcHCqUEq0QgH2fpl0Oq1xU2prz2gb7v0AsfnMNpKdMVdnFIZBXh+ZwW9WRk3l8k3rRDZZrA/rEWOTVxkB3aacaxF0YcbI84MampiRR3FGyBKiodKbfQLspMm8pLKGhdk1Vyoh2C2glKp7LQeq7qiLPbwbpMXNZ2+JSOOKwdrITStWwHt+qIza1L1sERKEObdnCfjvhGUIl2sJ9eBzf0g+MpedthLx2xbztY2nrIQxidpB7GifWZ2EOc2Mu6VFcgdXculqRa4geH8xksT1F/yInFGD3ZCoMstouAtOdkOIayTyZWFjRHJragrFDgTkonhTiasloRu0ZQIVmBQy3kKhMLCGgqQ30xSixcWBxqcgypieXMZnNMTIw5DiWXn2L8V1EUo9Fo1LVuDvPEneR7x7U/z8DiWpN/yBV8JQxfCQsLCwtMb2cAVlA4IFgAAABwCACdASpAAUsAPm02mUmkIyKhIGgAgA2JaW7hdfAAO6HVUmyYh1VJsmIdVSbJiHVUmyYh1VJsmIdVSbJiHVUmyYh1VJsmIdVSbIIAAP7/uxAAAAAAAAAA" alt="blockdyor"><button id="generate">Generate glyph masks</button><a id="download" hidden download="social-assets.json">Download social-assets.json</a><textarea id="output" aria-label="Generated glyph JSON"></textarea><script>
+const generateAssets=()=>// Offline only: run in the approved proposal browser page; returns RLE alpha masks.
+// Requires installed DejaVu Sans (Bitstream Vera license carried in runtime fragment).
+(() => {
+ const assets={};
+ function mask(key,text,size,weight=400,spacing=0){
+  const canvas=document.createElement('canvas');let ctx=canvas.getContext('2d');
+  ctx.font=`${weight} ${size}px "DejaVu Sans"`;const advances=[...text].map(ch=>ctx.measureText(ch).width);
+  const width=Math.ceil(advances.reduce((a,b)=>a+b,0)+spacing*Math.max(0,text.length-1));
+  canvas.width=Math.max(1,width+4);canvas.height=Math.ceil(size*1.5);ctx=canvas.getContext('2d');ctx.font=`${weight} ${size}px "DejaVu Sans"`;ctx.fillStyle='#fff';ctx.textBaseline='top';let x=2;for(const [i,ch]of [...text].entries()){ctx.fillText(ch,x,0);x+=advances[i]+spacing;}
+  return encode(key,canvas,width+spacing);
+ }
+ function encode(key,canvas,advance){
+  const ctx=canvas.getContext('2d'),rgba=ctx.getImageData(0,0,canvas.width,canvas.height).data;
+  let minX=canvas.width,minY=canvas.height,maxX=-1,maxY=-1;
+  for(let y=0;y<canvas.height;y++)for(let x=0;x<canvas.width;x++)if(rgba[(y*canvas.width+x)*4+3]>10){minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y);}
+  if(maxX<0){assets[key]={w:0,h:0,a:advance,x:0,y:0,d:''};return;}
+  const w=maxX-minX+1,h=maxY-minY+1,runs=[];let value=-1,count=0;
+  for(let y=minY;y<=maxY;y++)for(let x=minX;x<=maxX;x++){const v=Math.round(rgba[(y*canvas.width+x)*4+3]*7/255);if(v===value&&count<32)count++;else{if(count)runs.push((value<<5)|(count-1));value=v;count=1;}}
+  if(count)runs.push((value<<5)|(count-1));let binary='';for(const b of runs)binary+=String.fromCharCode(b);
+  assets[key]={w,h,a:advance,x:minX-2,y:minY,d:btoa(binary)};
+ }
+ for(const ch of '0123456789$€£.,na/CHF +−-e')mask('p'+ch,ch,100,700,-4);
+ for(const ch of '0123456789.,%+−nae-/')mask('d'+ch,ch,26,700);
+ for(const ch of '0123456789-: UTCna/')mask('t'+ch,ch,15,400);
+ for(const currency of ['USD','EUR','GBP','CHF'])mask('c'+currency,'Bitcoin / '+currency,21,400);
+ for(const [days,label]of Object.entries({'1':'1 day','7':'7 days','30':'30 days','90':'90 days','365':'1 year','1825':'5 years'}))mask('r'+days,' · '+label,21,400);
+ mask('domain','price.blockdyor.com',22,600,-.25);
+ const canvas=document.createElement('canvas');canvas.width=184;canvas.height=44;canvas.getContext('2d').drawImage(document.querySelector('.brand'),0,0,184,184*75/320);encode('logo',canvas,184);
+ return assets;
+})();
+document.querySelector('#generate').addEventListener('click',()=>{const logo=document.querySelector('.brand');if(!logo.complete||!logo.naturalWidth){document.querySelector('#output').value='Logo is loading. Retry Generate.';return;}const text=JSON.stringify(generateAssets());document.querySelector('#output').value=text;const a=document.querySelector('#download');a.href=URL.createObjectURL(new Blob([text],{type:'application/json'}));a.hidden=false;});
+</script></html>
